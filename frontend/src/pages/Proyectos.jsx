@@ -1,11 +1,13 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Plus, Package, Search, AlertTriangle, FolderOpen, MoreVertical, Edit2, Trash2, X } from 'lucide-react'
-import { getProyectos, createProyecto, updateProyecto, deleteProyecto, buscar } from '../utils/api'
-import { Modal, Button, Input, Toast, Spinner, EmptyState, ColorPicker, Badge } from '../components/ui'
+import { Plus, Package, Search, AlertTriangle, FolderOpen, MoreVertical, Edit2, Trash2, X, Download } from 'lucide-react'
+import { getProyectos, createProyecto, updateProyecto, deleteProyecto, buscar, exportarExcel } from '../utils/api'
+import { Modal, Button, Input, Toast, Spinner, EmptyState, ColorPicker, IconPicker, ProyectoIcon, Badge, DarkModeToggle } from '../components/ui'
+import { useDarkMode } from '../hooks/useDarkMode'
 
 export default function Proyectos() {
   const navigate = useNavigate()
+  const [dark, toggleDark] = useDarkMode()
   const [proyectos, setProyectos] = useState([])
   const [loading, setLoading] = useState(true)
   const [busqueda, setBusqueda] = useState('')
@@ -15,7 +17,7 @@ export default function Proyectos() {
   const [editando, setEditando] = useState(null)
   const [menuAbierto, setMenuAbierto] = useState(null)
   const [toast, setToast] = useState(null)
-  const [form, setForm] = useState({ nombre: '', descripcion: '', color: '#3B82F6' })
+  const [form, setForm] = useState({ nombre: '', descripcion: '', color: '#3B82F6', icono: 'Package' })
   const [errors, setErrors] = useState({})
 
   useEffect(() => { cargar() }, [])
@@ -52,7 +54,7 @@ export default function Proyectos() {
 
   function abrirCrear() {
     setEditando(null)
-    setForm({ nombre: '', descripcion: '', color: '#3B82F6' })
+    setForm({ nombre: '', descripcion: '', color: '#3B82F6', icono: 'Package' })
     setErrors({})
     setShowModal(true)
   }
@@ -61,9 +63,20 @@ export default function Proyectos() {
     e.stopPropagation()
     setMenuAbierto(null)
     setEditando(p)
-    setForm({ nombre: p.nombre, descripcion: p.descripcion || '', color: p.color })
+    setForm({ nombre: p.nombre, descripcion: p.descripcion || '', color: p.color, icono: p.icono || 'Package' })
     setErrors({})
     setShowModal(true)
+  }
+
+  async function handleExportar(p, e) {
+    e.stopPropagation()
+    setMenuAbierto(null)
+    try {
+      await exportarExcel(p.id, p.nombre)
+      showToast('Excel generado')
+    } catch {
+      showToast('Error al exportar', 'error')
+    }
   }
 
   async function handleEliminar(p, e) {
@@ -105,9 +118,9 @@ export default function Proyectos() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-gray-50 dark:bg-gray-950">
       {/* Header */}
-      <div className="bg-white border-b border-gray-200 sticky top-0 z-10">
+      <div className="bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-700 sticky top-0 z-10">
         <div className="max-w-4xl mx-auto px-4 py-4">
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-3">
@@ -115,10 +128,11 @@ export default function Proyectos() {
                 <Package size={18} className="text-white" />
               </div>
               <div>
-                <h1 className="text-lg font-bold text-gray-900">Inventario Almacén</h1>
-                <p className="text-xs text-gray-400">{proyectos.length} proyecto{proyectos.length !== 1 ? 's' : ''}</p>
+                <h1 className="text-lg font-bold text-gray-900 dark:text-gray-50">Inventario Almacén</h1>
+                <p className="text-xs text-gray-400 dark:text-gray-500">{proyectos.length} proyecto{proyectos.length !== 1 ? 's' : ''}</p>
               </div>
             </div>
+            <DarkModeToggle dark={dark} onToggle={toggleDark} />
           </div>
 
           {/* Buscador global */}
@@ -128,11 +142,11 @@ export default function Proyectos() {
               value={busqueda}
               onChange={e => setBusqueda(e.target.value)}
               placeholder="Buscar artículos en todos los proyectos..."
-              className="w-full pl-9 pr-10 py-2.5 rounded-xl border border-gray-200 bg-gray-50 text-sm outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
+              className="w-full pl-9 pr-10 py-2.5 rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-gray-500 text-sm outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
             />
             {busqueda && (
               <button onClick={() => { setBusqueda(''); setResultadosBusqueda(null) }}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">
                 <X size={14} />
               </button>
             )}
@@ -144,7 +158,7 @@ export default function Proyectos() {
         {/* Resultados de búsqueda */}
         {resultadosBusqueda !== null ? (
           <div>
-            <p className="text-sm text-gray-500 mb-3">
+            <p className="text-sm text-gray-500 dark:text-gray-400 mb-3">
               {buscando ? 'Buscando...' : `${resultadosBusqueda.length} resultado${resultadosBusqueda.length !== 1 ? 's' : ''} para "${busqueda}"`}
             </p>
             {resultadosBusqueda.length === 0 && !buscando ? (
@@ -157,20 +171,20 @@ export default function Proyectos() {
                 {resultadosBusqueda.map(art => (
                   <div key={art.id}
                     onClick={() => navigate(`/proyectos/${art.proyecto_id}/articulos/${art.id}`)}
-                    className="bg-white rounded-xl border border-gray-200 p-4 flex items-center gap-4 cursor-pointer hover:border-blue-300 hover:shadow-sm transition-all">
+                    className="bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-700 p-4 flex items-center gap-4 cursor-pointer hover:border-blue-300 dark:hover:border-blue-700 hover:shadow-sm transition-all">
                     <div className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: art.proyecto_color }} />
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2">
-                        <span className="font-medium text-gray-800 text-sm truncate">{art.nombre}</span>
+                        <span className="font-medium text-gray-800 dark:text-gray-100 text-sm truncate">{art.nombre}</span>
                         {art.bajo_minimo && <AlertTriangle size={13} className="text-red-500 flex-shrink-0" />}
                       </div>
-                      <p className="text-xs text-gray-400">{art.proyecto_nombre} · {art.categoria_nombre || 'Sin categoría'}</p>
+                      <p className="text-xs text-gray-400 dark:text-gray-500">{art.proyecto_nombre} · {art.categoria_nombre || 'Sin categoría'}</p>
                     </div>
                     <div className="text-right flex-shrink-0">
-                      <p className={`font-semibold text-sm ${art.bajo_minimo ? 'text-red-600' : 'text-gray-800'}`}>
+                      <p className={`font-semibold text-sm ${art.bajo_minimo ? 'text-red-600' : 'text-gray-800 dark:text-gray-100'}`}>
                         {art.cantidad} {art.unidad}
                       </p>
-                      {art.ubicacion && <p className="text-xs text-gray-400">{art.ubicacion}</p>}
+                      {art.ubicacion && <p className="text-xs text-gray-400 dark:text-gray-500">{art.ubicacion}</p>}
                     </div>
                   </div>
                 ))}
@@ -191,18 +205,18 @@ export default function Proyectos() {
               {proyectos.map(p => (
                 <div key={p.id}
                   onClick={() => navigate(`/proyectos/${p.id}`)}
-                  className="bg-white rounded-2xl border border-gray-200 p-5 cursor-pointer hover:border-gray-300 hover:shadow-md transition-all group relative">
+                  className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-700 p-5 cursor-pointer hover:border-gray-300 dark:hover:border-gray-600 hover:shadow-md transition-all group relative">
 
                   <div className="flex items-start gap-4">
-                    {/* Color indicator */}
+                    {/* Icono del proyecto */}
                     <div className="w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0"
                       style={{ backgroundColor: p.color + '20' }}>
-                      <div className="w-5 h-5 rounded-full" style={{ backgroundColor: p.color }} />
+                      <ProyectoIcon icono={p.icono} color={p.color} size={22} />
                     </div>
 
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 mb-1">
-                        <h2 className="font-semibold text-gray-900">{p.nombre}</h2>
+                        <h2 className="font-semibold text-gray-900 dark:text-gray-100">{p.nombre}</h2>
                         {p.articulos_bajo_minimo > 0 && (
                           <Badge color="red">
                             <AlertTriangle size={10} className="mr-1" />
@@ -210,25 +224,30 @@ export default function Proyectos() {
                           </Badge>
                         )}
                       </div>
-                      {p.descripcion && <p className="text-sm text-gray-400 truncate">{p.descripcion}</p>}
-                      <p className="text-xs text-gray-400 mt-1">{p.total_articulos} artículo{p.total_articulos !== 1 ? 's' : ''}</p>
+                      {p.descripcion && <p className="text-sm text-gray-400 dark:text-gray-500 truncate">{p.descripcion}</p>}
+                      <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">{p.total_articulos} artículo{p.total_articulos !== 1 ? 's' : ''}</p>
                     </div>
 
                     {/* Menu */}
                     <div className="relative">
                       <button
                         onClick={e => { e.stopPropagation(); setMenuAbierto(menuAbierto === p.id ? null : p.id) }}
-                        className="p-1.5 rounded-lg opacity-0 group-hover:opacity-100 hover:bg-gray-100 transition-all">
-                        <MoreVertical size={16} className="text-gray-500" />
+                        className="p-1.5 rounded-lg opacity-0 group-hover:opacity-100 hover:bg-gray-100 dark:hover:bg-gray-800 transition-all">
+                        <MoreVertical size={16} className="text-gray-500 dark:text-gray-400" />
                       </button>
                       {menuAbierto === p.id && (
-                        <div className="absolute right-0 top-8 bg-white border border-gray-200 rounded-xl shadow-lg z-10 min-w-[140px] py-1">
+                        <div className="absolute right-0 top-8 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl shadow-lg z-10 min-w-[160px] py-1">
                           <button onClick={e => abrirEditar(p, e)}
-                            className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50">
+                            className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700">
                             <Edit2 size={14} /> Editar
                           </button>
+                          <button onClick={e => handleExportar(p, e)}
+                            className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700">
+                            <Download size={14} /> Descargar Excel
+                          </button>
+                          <div className="my-1 border-t border-gray-100 dark:border-gray-700" />
                           <button onClick={e => handleEliminar(p, e)}
-                            className="w-full flex items-center gap-2 px-3 py-2 text-sm text-red-600 hover:bg-red-50">
+                            className="w-full flex items-center gap-2 px-3 py-2 text-sm text-red-600 hover:bg-red-50 dark:hover:bg-red-950">
                             <Trash2 size={14} /> Eliminar
                           </button>
                         </div>
@@ -259,6 +278,7 @@ export default function Proyectos() {
             <Input label="Descripción" value={form.descripcion} onChange={e => setForm(f => ({ ...f, descripcion: e.target.value }))}
               placeholder="Descripción opcional" />
             <ColorPicker value={form.color} onChange={c => setForm(f => ({ ...f, color: c }))} />
+            <IconPicker value={form.icono} color={form.color} onChange={i => setForm(f => ({ ...f, icono: i }))} />
             <div className="flex gap-3 pt-2">
               <Button variant="ghost" onClick={() => setShowModal(false)} className="flex-1">Cancelar</Button>
               <Button onClick={handleGuardar} className="flex-1">{editando ? 'Guardar' : 'Crear'}</Button>

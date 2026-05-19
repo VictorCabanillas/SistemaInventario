@@ -1,12 +1,14 @@
 import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { Plus, ArrowLeft, AlertTriangle, Package, Search, X, Download, Filter } from 'lucide-react'
-import { getArticulos, getProyectos, getCategorias, createArticulo, exportarExcel } from '../utils/api'
-import { Spinner, EmptyState, Toast, Badge, Modal, Input, Select, Button } from '../components/ui'
+import { Plus, ArrowLeft, AlertTriangle, Package, Search, X, Download, Filter, MoreVertical, Edit2, Trash2 } from 'lucide-react'
+import { getArticulos, getProyectos, getCategorias, createArticulo, exportarExcel, updateProyecto, deleteProyecto } from '../utils/api'
+import { Spinner, EmptyState, Toast, Badge, Modal, Input, Select, Button, ProyectoIcon, ColorPicker, IconPicker, DarkModeToggle } from '../components/ui'
+import { useDarkMode } from '../hooks/useDarkMode'
 
 export default function Articulos() {
   const { proyectoId } = useParams()
   const navigate = useNavigate()
+  const [dark, toggleDark] = useDarkMode()
   const [articulos, setArticulos] = useState([])
   const [proyecto, setProyecto] = useState(null)
   const [categorias, setCategorias] = useState([])
@@ -15,6 +17,9 @@ export default function Articulos() {
   const [filtroCat, setFiltroCat] = useState('')
   const [showFiltros, setShowFiltros] = useState(false)
   const [showModal, setShowModal] = useState(false)
+  const [showMenuProyecto, setShowMenuProyecto] = useState(false)
+  const [showEditProyecto, setShowEditProyecto] = useState(false)
+  const [formProyecto, setFormProyecto] = useState({ nombre: '', descripcion: '', color: '#3B82F6', icono: 'Package' })
   const [toast, setToast] = useState(null)
   const [form, setForm] = useState({ nombre: '', categoria_id: '', cantidad: '', unidad: 'ud', ubicacion: '', stock_minimo: '', notas: '' })
   const [errors, setErrors] = useState({})
@@ -72,6 +77,40 @@ export default function Articulos() {
     }
   }
 
+  function abrirEditarProyecto() {
+    setFormProyecto({
+      nombre: proyecto.nombre,
+      descripcion: proyecto.descripcion || '',
+      color: proyecto.color,
+      icono: proyecto.icono || 'Package'
+    })
+    setShowMenuProyecto(false)
+    setShowEditProyecto(true)
+  }
+
+  async function handleGuardarProyecto() {
+    if (!formProyecto.nombre.trim()) return
+    try {
+      const updated = await updateProyecto(proyecto.id, formProyecto)
+      setProyecto(p => ({ ...p, ...updated }))
+      setShowEditProyecto(false)
+      showToast('Proyecto actualizado')
+    } catch {
+      showToast('Error al guardar', 'error')
+    }
+  }
+
+  async function handleEliminarProyecto() {
+    setShowMenuProyecto(false)
+    if (!confirm(`¿Eliminar el proyecto "${proyecto.nombre}"? Se eliminarán todos sus artículos.`)) return
+    try {
+      await deleteProyecto(proyecto.id)
+      navigate('/')
+    } catch {
+      showToast('Error al eliminar', 'error')
+    }
+  }
+
   async function handleExportar() {
     try {
       await exportarExcel(proyectoId, proyecto?.nombre || 'proyecto')
@@ -92,21 +131,24 @@ export default function Articulos() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-gray-50 dark:bg-gray-950">
       {/* Header */}
-      <div className="bg-white border-b border-gray-200 sticky top-0 z-10">
+      <div className="bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-700 sticky top-0 z-10">
         <div className="max-w-4xl mx-auto px-4 py-4">
           <div className="flex items-center gap-3 mb-4">
-            <button onClick={() => navigate('/')} className="p-2 rounded-xl hover:bg-gray-100 transition-colors">
-              <ArrowLeft size={18} className="text-gray-600" />
+            <button onClick={() => navigate('/')} className="p-2 rounded-xl hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors">
+              <ArrowLeft size={18} className="text-gray-600 dark:text-gray-400" />
             </button>
             {proyecto && (
               <>
-                <div className="w-8 h-8 rounded-xl flex-shrink-0" style={{ backgroundColor: proyecto.color }} />
+                <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0"
+                  style={{ backgroundColor: proyecto.color + '20' }}>
+                  <ProyectoIcon icono={proyecto.icono} color={proyecto.color} size={18} />
+                </div>
                 <div className="flex-1 min-w-0">
-                  <h1 className="font-bold text-gray-900 truncate">{proyecto.nombre}</h1>
+                  <h1 className="font-bold text-gray-900 dark:text-gray-50 truncate">{proyecto.nombre}</h1>
                   <div className="flex items-center gap-2">
-                    <span className="text-xs text-gray-400">{articulos.length} artículo{articulos.length !== 1 ? 's' : ''}</span>
+                    <span className="text-xs text-gray-400 dark:text-gray-500">{articulos.length} artículo{articulos.length !== 1 ? 's' : ''}</span>
                     {bajosMinimo > 0 && (
                       <Badge color="red">
                         <AlertTriangle size={10} className="mr-1" />
@@ -115,11 +157,32 @@ export default function Articulos() {
                     )}
                   </div>
                 </div>
-                {/* Exportar: icono discreto */}
-                <button onClick={handleExportar} title="Exportar a Excel"
-                  className="p-2 rounded-xl hover:bg-gray-100 transition-colors text-gray-400 hover:text-gray-600">
-                  <Download size={18} />
-                </button>
+                <DarkModeToggle dark={dark} onToggle={toggleDark} />
+                {/* Menú del proyecto */}
+                <div className="relative">
+                  <button
+                    onClick={() => setShowMenuProyecto(m => !m)}
+                    className="p-2 rounded-xl hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">
+                    <MoreVertical size={18} />
+                  </button>
+                  {showMenuProyecto && (
+                    <div className="absolute right-0 top-10 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl shadow-lg z-20 min-w-[170px] py-1">
+                      <button onClick={abrirEditarProyecto}
+                        className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700">
+                        <Edit2 size={14} /> Editar proyecto
+                      </button>
+                      <button onClick={() => { setShowMenuProyecto(false); handleExportar() }}
+                        className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700">
+                        <Download size={14} /> Descargar Excel
+                      </button>
+                      <div className="my-1 border-t border-gray-100 dark:border-gray-700" />
+                      <button onClick={handleEliminarProyecto}
+                        className="w-full flex items-center gap-2 px-3 py-2 text-sm text-red-600 hover:bg-red-50 dark:hover:bg-red-950">
+                        <Trash2 size={14} /> Eliminar proyecto
+                      </button>
+                    </div>
+                  )}
+                </div>
               </>
             )}
           </div>
@@ -130,7 +193,7 @@ export default function Articulos() {
               <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
               <input value={filtro} onChange={e => setFiltro(e.target.value)}
                 placeholder="Buscar por nombre o ubicación..."
-                className="w-full pl-9 pr-8 py-2.5 rounded-xl border border-gray-200 bg-gray-50 text-sm outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500" />
+                className="w-full pl-9 pr-8 py-2.5 rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-gray-500 text-sm outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500" />
               {filtro && (
                 <button onClick={() => setFiltro('')} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400">
                   <X size={13} />
@@ -138,7 +201,11 @@ export default function Articulos() {
               )}
             </div>
             <button onClick={() => setShowFiltros(f => !f)}
-              className={`px-3 py-2.5 rounded-xl border text-sm transition-colors ${filtroCat ? 'border-blue-400 bg-blue-50 text-blue-600' : 'border-gray-200 bg-gray-50 text-gray-600 hover:bg-gray-100'}`}>
+              className={`px-3 py-2.5 rounded-xl border text-sm transition-colors ${
+                filtroCat
+                  ? 'border-blue-400 bg-blue-50 dark:bg-blue-900/30 text-blue-600'
+                  : 'border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700'
+              }`}>
               <Filter size={16} />
             </button>
           </div>
@@ -146,7 +213,7 @@ export default function Articulos() {
           {showFiltros && (
             <div className="mt-2">
               <select value={filtroCat} onChange={e => setFiltroCat(e.target.value)}
-                className="w-full px-3 py-2 rounded-xl border border-gray-200 bg-gray-50 text-sm outline-none">
+                className="w-full px-3 py-2 rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 dark:text-gray-100 text-sm outline-none">
                 <option value="">Todas las categorías</option>
                 {categorias.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
               </select>
@@ -167,27 +234,30 @@ export default function Articulos() {
             {articulosFiltrados.map(art => (
               <div key={art.id}
                 onClick={() => navigate(`/proyectos/${proyectoId}/articulos/${art.id}`)}
-                className={`bg-white rounded-xl border p-4 cursor-pointer hover:shadow-sm transition-all flex items-center gap-4
-                  ${art.bajo_minimo ? 'border-red-200 bg-red-50/30' : 'border-gray-200 hover:border-gray-300'}`}>
+                className={`rounded-xl border p-4 cursor-pointer hover:shadow-sm transition-all flex items-center gap-4
+                  ${art.bajo_minimo
+                    ? 'border-red-200 dark:border-red-800 bg-red-50/30 dark:bg-red-950/30'
+                    : 'bg-white dark:bg-gray-900 border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600'
+                  }`}>
 
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 mb-0.5">
-                    <span className="font-medium text-gray-800 text-sm truncate">{art.nombre}</span>
+                    <span className="font-medium text-gray-800 dark:text-gray-100 text-sm truncate">{art.nombre}</span>
                     {art.bajo_minimo && <AlertTriangle size={13} className="text-red-500 flex-shrink-0" />}
                   </div>
                   <div className="flex items-center gap-2 flex-wrap">
                     {art.categoria_nombre && <Badge>{art.categoria_nombre}</Badge>}
-                    {art.ubicacion && <span className="text-xs text-gray-400">📍 {art.ubicacion}</span>}
+                    {art.ubicacion && <span className="text-xs text-gray-400 dark:text-gray-500">📍 {art.ubicacion}</span>}
                   </div>
                 </div>
 
                 <div className="text-right flex-shrink-0">
-                  <p className={`font-bold text-base ${art.bajo_minimo ? 'text-red-600' : 'text-gray-900'}`}>
+                  <p className={`font-bold text-base ${art.bajo_minimo ? 'text-red-600 dark:text-red-400' : 'text-gray-900 dark:text-gray-100'}`}>
                     {art.cantidad}
                   </p>
-                  <p className="text-xs text-gray-400">{art.unidad}</p>
+                  <p className="text-xs text-gray-400 dark:text-gray-500">{art.unidad}</p>
                   {art.stock_minimo && (
-                    <p className="text-xs text-gray-400">mín. {art.stock_minimo}</p>
+                    <p className="text-xs text-gray-400 dark:text-gray-500">mín. {art.stock_minimo}</p>
                   )}
                 </div>
               </div>
@@ -232,10 +302,10 @@ export default function Articulos() {
               placeholder="Dejar vacío si no aplica" />
 
             <div className="space-y-1">
-              <label className="block text-sm font-medium text-gray-700">Notas</label>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">Notas</label>
               <textarea value={form.notas} onChange={e => setForm(f => ({ ...f, notas: e.target.value }))}
                 rows={2} placeholder="Notas opcionales..."
-                className="w-full px-3 py-2.5 rounded-xl border border-gray-200 bg-gray-50 text-sm outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 resize-none" />
+                className="w-full px-3 py-2.5 rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-gray-500 text-sm outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 resize-none" />
             </div>
 
             <div className="flex gap-3 pt-2">
@@ -246,7 +316,33 @@ export default function Articulos() {
         </Modal>
       )}
 
+      {/* Modal editar proyecto */}
+      {showEditProyecto && (
+        <Modal title="Editar proyecto" onClose={() => setShowEditProyecto(false)}>
+          <div className="space-y-4">
+            <Input label="Nombre *" value={formProyecto.nombre}
+              onChange={e => setFormProyecto(f => ({ ...f, nombre: e.target.value }))}
+              placeholder="Nombre del proyecto" />
+            <Input label="Descripción" value={formProyecto.descripcion}
+              onChange={e => setFormProyecto(f => ({ ...f, descripcion: e.target.value }))}
+              placeholder="Descripción opcional" />
+            <ColorPicker value={formProyecto.color} onChange={c => setFormProyecto(f => ({ ...f, color: c }))} />
+            <IconPicker value={formProyecto.icono} color={formProyecto.color}
+              onChange={i => setFormProyecto(f => ({ ...f, icono: i }))} />
+            <div className="flex gap-3 pt-2">
+              <Button variant="ghost" onClick={() => setShowEditProyecto(false)} className="flex-1">Cancelar</Button>
+              <Button onClick={handleGuardarProyecto} className="flex-1">Guardar</Button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
       {toast && <Toast {...toast} onClose={() => setToast(null)} />}
+
+      {/* Overlay para cerrar menú del proyecto */}
+      {showMenuProyecto && (
+        <div className="fixed inset-0 z-0" onClick={() => setShowMenuProyecto(false)} />
+      )}
     </div>
   )
 }

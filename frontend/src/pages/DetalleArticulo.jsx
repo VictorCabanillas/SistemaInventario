@@ -2,24 +2,24 @@ import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { ArrowLeft, Plus, Minus, Edit2, Trash2, AlertTriangle, Clock, Package, ChevronDown, ChevronUp } from 'lucide-react'
 import { getArticulo, updateArticulo, deleteArticulo, createMovimiento, getMovimientos, getCategorias } from '../utils/api'
-import { Modal, Button, Input, Select, Toast, Spinner, Badge } from '../components/ui'
+import { Modal, Button, Input, Select, Toast, Spinner, Badge, DarkModeToggle } from '../components/ui'
+import { useDarkMode } from '../hooks/useDarkMode'
 
 export default function DetalleArticulo() {
   const { proyectoId, articuloId } = useParams()
   const navigate = useNavigate()
+  const [dark, toggleDark] = useDarkMode()
   const [articulo, setArticulo] = useState(null)
   const [categorias, setCategorias] = useState([])
   const [movimientos, setMovimientos] = useState([])
   const [loading, setLoading] = useState(true)
   const [showHistorial, setShowHistorial] = useState(false)
-  const [modal, setModal] = useState(null) // 'editar' | 'stock'
+  const [modal, setModal] = useState(null)
   const [toast, setToast] = useState(null)
 
-  // Formulario editar info
   const [formInfo, setFormInfo] = useState({})
   const [errorsInfo, setErrorsInfo] = useState({})
 
-  // Formulario stock
   const [formStock, setFormStock] = useState({ tipo: 'entrada', cantidad: '', operador: '', motivo: '' })
   const [errorsStock, setErrorsStock] = useState({})
 
@@ -88,7 +88,6 @@ export default function DetalleArticulo() {
         motivo: formStock.motivo || null,
       })
       setArticulo(updated)
-      // Recargar historial
       const movs = await getMovimientos(articuloId)
       setMovimientos(movs)
       setModal(null)
@@ -119,25 +118,30 @@ export default function DetalleArticulo() {
     setToast({ message, type })
   }
 
-  if (loading) return <div className="min-h-screen bg-gray-50 flex items-center justify-center"><Spinner /></div>
+  if (loading) return (
+    <div className="min-h-screen bg-gray-50 dark:bg-gray-950 flex items-center justify-center">
+      <Spinner />
+    </div>
+  )
   if (!articulo) return null
 
   const bajominimo = articulo.bajo_minimo
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-gray-50 dark:bg-gray-950">
       {/* Header */}
-      <div className="bg-white border-b border-gray-200 sticky top-0 z-10">
+      <div className="bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-700 sticky top-0 z-10">
         <div className="max-w-2xl mx-auto px-4 py-4 flex items-center gap-3">
           <button onClick={() => navigate(`/proyectos/${proyectoId}`)}
-            className="p-2 rounded-xl hover:bg-gray-100 transition-colors">
-            <ArrowLeft size={18} className="text-gray-600" />
+            className="p-2 rounded-xl hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors">
+            <ArrowLeft size={18} className="text-gray-600 dark:text-gray-400" />
           </button>
           <div className="flex-1 min-w-0">
-            <h1 className="font-bold text-gray-900 truncate">{articulo.nombre}</h1>
-            <p className="text-xs text-gray-400">{articulo.categoria_nombre || 'Sin categoría'}</p>
+            <h1 className="font-bold text-gray-900 dark:text-gray-50 truncate">{articulo.nombre}</h1>
+            <p className="text-xs text-gray-400 dark:text-gray-500">{articulo.categoria_nombre || 'Sin categoría'}</p>
           </div>
-          <button onClick={handleEliminar} className="p-2 rounded-xl hover:bg-red-50 transition-colors">
+          <DarkModeToggle dark={dark} onToggle={toggleDark} />
+          <button onClick={handleEliminar} className="p-2 rounded-xl hover:bg-red-50 dark:hover:bg-red-950 transition-colors">
             <Trash2 size={16} className="text-red-400" />
           </button>
         </div>
@@ -145,19 +149,23 @@ export default function DetalleArticulo() {
 
       <div className="max-w-2xl mx-auto px-4 py-6 space-y-4">
         {/* Tarjeta principal de stock */}
-        <div className={`rounded-2xl p-6 text-center ${bajominimo ? 'bg-red-50 border-2 border-red-200' : 'bg-white border border-gray-200'}`}>
+        <div className={`rounded-2xl p-6 text-center ${
+          bajominimo
+            ? 'bg-red-50 dark:bg-red-950 border-2 border-red-200 dark:border-red-800'
+            : 'bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700'
+        }`}>
           {bajominimo && (
-            <div className="flex items-center justify-center gap-1.5 text-red-600 text-sm font-medium mb-3">
+            <div className="flex items-center justify-center gap-1.5 text-red-600 dark:text-red-400 text-sm font-medium mb-3">
               <AlertTriangle size={14} />
               Stock bajo mínimo
             </div>
           )}
-          <div className={`text-6xl font-bold mb-1 ${bajominimo ? 'text-red-700' : 'text-gray-900'}`}>
+          <div className={`text-6xl font-bold mb-1 ${bajominimo ? 'text-red-700 dark:text-red-400' : 'text-gray-900 dark:text-gray-50'}`}>
             {articulo.cantidad}
           </div>
-          <div className="text-gray-400 text-sm">{articulo.unidad}</div>
+          <div className="text-gray-400 dark:text-gray-500 text-sm">{articulo.unidad}</div>
           {articulo.stock_minimo && (
-            <div className="text-xs text-gray-400 mt-1">Mínimo: {articulo.stock_minimo} {articulo.unidad}</div>
+            <div className="text-xs text-gray-400 dark:text-gray-500 mt-1">Mínimo: {articulo.stock_minimo} {articulo.unidad}</div>
           )}
 
           {/* Botones de stock */}
@@ -174,9 +182,9 @@ export default function DetalleArticulo() {
         </div>
 
         {/* Información del artículo */}
-        <div className="bg-white rounded-2xl border border-gray-200 p-5">
+        <div className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-700 p-5">
           <div className="flex items-center justify-between mb-4">
-            <h2 className="font-semibold text-gray-800">Información</h2>
+            <h2 className="font-semibold text-gray-800 dark:text-gray-100">Información</h2>
             <button onClick={() => { setErrorsInfo({}); setModal('editar') }}
               className="flex items-center gap-1.5 text-sm text-blue-600 hover:text-blue-700 font-medium">
               <Edit2 size={14} /> Editar
@@ -191,47 +199,49 @@ export default function DetalleArticulo() {
               { label: 'Notas', value: articulo.notas },
             ].map(({ label, value }) => value ? (
               <div key={label} className="flex items-start gap-3">
-                <span className="text-xs font-medium text-gray-400 w-28 flex-shrink-0 pt-0.5">{label}</span>
-                <span className="text-sm text-gray-700">{value}</span>
+                <span className="text-xs font-medium text-gray-400 dark:text-gray-500 w-28 flex-shrink-0 pt-0.5">{label}</span>
+                <span className="text-sm text-gray-700 dark:text-gray-300">{value}</span>
               </div>
             ) : null)}
           </div>
         </div>
 
         {/* Historial de movimientos */}
-        <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
+        <div className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-700 overflow-hidden">
           <button onClick={() => setShowHistorial(h => !h)}
-            className="w-full flex items-center justify-between p-5 hover:bg-gray-50 transition-colors">
+            className="w-full flex items-center justify-between p-5 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors">
             <div className="flex items-center gap-2">
-              <Clock size={16} className="text-gray-400" />
-              <span className="font-semibold text-gray-800">Historial</span>
+              <Clock size={16} className="text-gray-400 dark:text-gray-500" />
+              <span className="font-semibold text-gray-800 dark:text-gray-100">Historial</span>
               <Badge>{movimientos.length}</Badge>
             </div>
-            {showHistorial ? <ChevronUp size={16} className="text-gray-400" /> : <ChevronDown size={16} className="text-gray-400" />}
+            {showHistorial
+              ? <ChevronUp size={16} className="text-gray-400 dark:text-gray-500" />
+              : <ChevronDown size={16} className="text-gray-400 dark:text-gray-500" />}
           </button>
 
           {showHistorial && (
-            <div className="border-t border-gray-100">
+            <div className="border-t border-gray-100 dark:border-gray-800">
               {movimientos.length === 0 ? (
-                <p className="text-sm text-gray-400 text-center py-6">Sin movimientos registrados</p>
+                <p className="text-sm text-gray-400 dark:text-gray-500 text-center py-6">Sin movimientos registrados</p>
               ) : (
-                <div className="divide-y divide-gray-50">
+                <div className="divide-y divide-gray-50 dark:divide-gray-800">
                   {movimientos.map(mov => (
                     <div key={mov.id} className="flex items-center gap-3 px-5 py-3">
                       <div className={`w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0
-                        ${mov.tipo === 'entrada' ? 'bg-green-100' : 'bg-red-100'}`}>
+                        ${mov.tipo === 'entrada' ? 'bg-green-100 dark:bg-green-900' : 'bg-red-100 dark:bg-red-900'}`}>
                         {mov.tipo === 'entrada'
-                          ? <Plus size={13} className="text-green-600" />
-                          : <Minus size={13} className="text-red-600" />}
+                          ? <Plus size={13} className="text-green-600 dark:text-green-400" />
+                          : <Minus size={13} className="text-red-600 dark:text-red-400" />}
                       </div>
                       <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium text-gray-700">{mov.operador}</p>
-                        <p className="text-xs text-gray-400">
+                        <p className="text-sm font-medium text-gray-700 dark:text-gray-300">{mov.operador}</p>
+                        <p className="text-xs text-gray-400 dark:text-gray-500">
                           {new Date(mov.fecha).toLocaleString('es-ES', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
                           {mov.motivo && ` · ${mov.motivo}`}
                         </p>
                       </div>
-                      <span className={`font-bold text-sm flex-shrink-0 ${mov.tipo === 'entrada' ? 'text-green-600' : 'text-red-600'}`}>
+                      <span className={`font-bold text-sm flex-shrink-0 ${mov.tipo === 'entrada' ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
                         {mov.tipo === 'entrada' ? '+' : '-'}{mov.cantidad}
                       </span>
                     </div>
@@ -266,9 +276,9 @@ export default function DetalleArticulo() {
               onChange={e => setFormInfo(f => ({ ...f, ubicacion: e.target.value }))}
               placeholder="Estantería, caja..." />
             <div className="space-y-1">
-              <label className="block text-sm font-medium text-gray-700">Notas</label>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">Notas</label>
               <textarea value={formInfo.notas} onChange={e => setFormInfo(f => ({ ...f, notas: e.target.value }))}
-                rows={2} className="w-full px-3 py-2.5 rounded-xl border border-gray-200 bg-gray-50 text-sm outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 resize-none" />
+                rows={2} className="w-full px-3 py-2.5 rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 dark:text-gray-100 text-sm outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 resize-none" />
             </div>
             <div className="flex gap-3 pt-2">
               <Button variant="ghost" onClick={() => setModal(null)} className="flex-1">Cancelar</Button>
@@ -278,20 +288,19 @@ export default function DetalleArticulo() {
         </Modal>
       )}
 
-      {/* Modal editar stock */}
+      {/* Modal movimiento de stock */}
       {modal === 'stock' && (
         <Modal
           title={formStock.tipo === 'entrada' ? 'Añadir stock' : 'Retirar stock'}
           onClose={() => setModal(null)}>
           <div className="space-y-4">
-            {/* Tipo */}
             <div className="grid grid-cols-2 gap-2">
               {['entrada', 'salida'].map(t => (
                 <button key={t} onClick={() => setFormStock(f => ({ ...f, tipo: t }))}
                   className={`py-2.5 rounded-xl text-sm font-medium transition-colors border
                     ${formStock.tipo === t
                       ? t === 'entrada' ? 'bg-green-600 text-white border-green-600' : 'bg-red-600 text-white border-red-600'
-                      : 'bg-gray-50 text-gray-600 border-gray-200 hover:bg-gray-100'}`}>
+                      : 'bg-gray-50 dark:bg-gray-800 text-gray-600 dark:text-gray-400 border-gray-200 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-700'}`}>
                   {t === 'entrada' ? '+ Añadir' : '- Retirar'}
                 </button>
               ))}
@@ -306,15 +315,14 @@ export default function DetalleArticulo() {
               placeholder={`Cantidad en ${articulo.unidad}`}
             />
 
-            {/* Stock resultante (preview) */}
             {formStock.cantidad && !isNaN(parseFloat(formStock.cantidad)) && (
-              <div className="bg-gray-50 rounded-xl p-3 text-center">
-                <p className="text-xs text-gray-400 mb-0.5">Stock resultante</p>
+              <div className="bg-gray-50 dark:bg-gray-800 rounded-xl p-3 text-center">
+                <p className="text-xs text-gray-400 dark:text-gray-500 mb-0.5">Stock resultante</p>
                 <p className={`text-2xl font-bold ${
                   (formStock.tipo === 'entrada'
                     ? articulo.cantidad + parseFloat(formStock.cantidad)
                     : articulo.cantidad - parseFloat(formStock.cantidad)) < 0
-                    ? 'text-red-600' : 'text-gray-800'
+                    ? 'text-red-600' : 'text-gray-800 dark:text-gray-100'
                 }`}>
                   {formStock.tipo === 'entrada'
                     ? articulo.cantidad + parseFloat(formStock.cantidad)

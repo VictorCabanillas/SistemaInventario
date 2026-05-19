@@ -28,6 +28,7 @@ def init_db():
             nombre TEXT NOT NULL,
             descripcion TEXT,
             color TEXT DEFAULT '#3B82F6',
+            icono TEXT DEFAULT 'Package',
             created_at TEXT DEFAULT (datetime('now'))
         );
 
@@ -58,6 +59,13 @@ def init_db():
             FOREIGN KEY (articulo_id) REFERENCES articulos(id) ON DELETE CASCADE
         );
     """)
+
+    # Migración: añadir columna icono si no existe (DBs anteriores)
+    try:
+        cursor.execute("ALTER TABLE proyectos ADD COLUMN icono TEXT DEFAULT 'Package'")
+        conn.commit()
+    except Exception:
+        pass
 
     # Seed data: categorías por defecto
     categorias_default = [

@@ -17,17 +17,20 @@ class ProyectoCreate(BaseModel):
     nombre: str
     descripcion: Optional[str] = None
     color: Optional[str] = "#3B82F6"
+    icono: Optional[str] = "Package"
 
 class ProyectoUpdate(BaseModel):
     nombre: Optional[str] = None
     descripcion: Optional[str] = None
     color: Optional[str] = None
+    icono: Optional[str] = None
 
 class Proyecto(BaseModel):
     id: int
     nombre: str
     descripcion: Optional[str]
     color: str
+    icono: Optional[str] = "Package"
     created_at: str
     total_articulos: Optional[int] = 0
     articulos_bajo_minimo: Optional[int] = 0

@@ -6,6 +6,8 @@ from typing import List, Optional
 import os
 import io
 
+ICONOS_DIR = os.path.join(os.path.dirname(__file__), "iconos")
+
 from database import get_db, init_db
 from schemas import (
     Categoria, CategoriaCreate,
@@ -28,6 +30,39 @@ app.add_middleware(
 @app.on_event("startup")
 def startup():
     init_db()
+
+
+# ─────────────────────────────────────────
+# ICONOS PERSONALIZADOS
+# ─────────────────────────────────────────
+
+ICONOS_MIME = {
+    ".svg": "image/svg+xml",
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".webp": "image/webp",
+}
+
+@app.get("/api/iconos")
+def get_iconos():
+    os.makedirs(ICONOS_DIR, exist_ok=True)
+    return sorted(
+        f for f in os.listdir(ICONOS_DIR)
+        if os.path.splitext(f)[1].lower() in ICONOS_MIME
+    )
+
+@app.get("/api/iconos/{filename}")
+def get_icono(filename: str):
+    if "/" in filename or "\\" in filename:
+        raise HTTPException(400, "Nombre de archivo inválido")
+    ext = os.path.splitext(filename)[1].lower()
+    if ext not in ICONOS_MIME:
+        raise HTTPException(400, "Tipo de archivo no permitido")
+    path = os.path.join(ICONOS_DIR, filename)
+    if not os.path.exists(path):
+        raise HTTPException(404, "Icono no encontrado")
+    return FileResponse(path, media_type=ICONOS_MIME[ext])
 
 
 # ─────────────────────────────────────────
@@ -85,8 +120,8 @@ def get_proyectos():
 def create_proyecto(data: ProyectoCreate):
     db = get_db()
     cur = db.execute(
-        "INSERT INTO proyectos (nombre, descripcion, color) VALUES (?,?,?)",
-        (data.nombre, data.descripcion, data.color)
+        "INSERT INTO proyectos (nombre, descripcion, color, icono) VALUES (?,?,?,?)",
+        (data.nombre, data.descripcion, data.color, data.icono)
     )
     db.commit()
     row = db.execute("""
