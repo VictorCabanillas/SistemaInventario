@@ -152,6 +152,30 @@ export function EmptyState({ icon: Icon, title, description, action }) {
   )
 }
 
+// ── ConfirmDialog ────────────────────────────────────────────
+export function ConfirmDialog({ title, message, confirmLabel = 'Eliminar', confirmVariant = 'danger', onConfirm, onCancel }) {
+  useEffect(() => {
+    const h = (e) => e.key === 'Escape' && onCancel()
+    window.addEventListener('keydown', h)
+    return () => window.removeEventListener('keydown', h)
+  }, [onCancel])
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+      <div className="bg-white dark:bg-gray-900 rounded-2xl shadow-2xl w-full max-w-sm">
+        <div className="p-6 pb-3">
+          <h2 className="text-base font-semibold text-gray-800 dark:text-gray-100 mb-1">{title}</h2>
+          {message && <p className="text-sm text-gray-500 dark:text-gray-400">{message}</p>}
+        </div>
+        <div className="flex gap-3 px-6 pb-6">
+          <Button variant="ghost" onClick={onCancel} className="flex-1">Cancelar</Button>
+          <Button variant={confirmVariant} onClick={onConfirm} className="flex-1">{confirmLabel}</Button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ── DarkModeToggle ───────────────────────────────────────────
 export function DarkModeToggle({ dark, onToggle }) {
   return (

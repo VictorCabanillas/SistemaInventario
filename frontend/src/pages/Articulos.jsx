@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { Plus, ArrowLeft, AlertTriangle, Package, Search, X, Download, Filter, MoreVertical, Edit2, Trash2 } from 'lucide-react'
-import { getArticulos, getProyectos, getCategorias, createArticulo, exportarExcel, updateProyecto, deleteProyecto } from '../utils/api'
-import { Spinner, EmptyState, Toast, Badge, Modal, Input, Select, Button, ProyectoIcon, ColorPicker, IconPicker, DarkModeToggle } from '../components/ui'
+import { Plus, ArrowLeft, AlertTriangle, Package, Search, X, Download, Filter, MoreVertical, Edit2, Trash2, Sliders, ArrowUpDown } from 'lucide-react'
+import { getArticulos, getProyectos, getCategorias, createArticulo, exportarExcel, updateProyecto, deleteProyecto, createMovimientosBulk } from '../utils/api'
+import { Spinner, EmptyState, Toast, Badge, Modal, Input, Select, Button, ProyectoIcon, ColorPicker, IconPicker, DarkModeToggle, ConfirmDialog } from '../components/ui'
 import { useDarkMode } from '../hooks/useDarkMode'
 
 export default function Articulos() {
@@ -16,13 +16,20 @@ export default function Articulos() {
   const [filtro, setFiltro] = useState('')
   const [filtroCat, setFiltroCat] = useState('')
   const [showFiltros, setShowFiltros] = useState(false)
+  const [ordenar, setOrdenar] = useState('nombre_asc')
   const [showModal, setShowModal] = useState(false)
   const [showMenuProyecto, setShowMenuProyecto] = useState(false)
   const [showEditProyecto, setShowEditProyecto] = useState(false)
+  const [showBulkModal, setShowBulkModal] = useState(false)
   const [formProyecto, setFormProyecto] = useState({ nombre: '', descripcion: '', color: '#3B82F6', icono: 'Package' })
   const [toast, setToast] = useState(null)
+  const [confirmDlg, setConfirmDlg] = useState(null)
   const [form, setForm] = useState({ nombre: '', categoria_id: '', cantidad: '', unidad: 'ud', ubicacion: '', stock_minimo: '', notas: '' })
   const [errors, setErrors] = useState({})
+  const [bulkItems, setBulkItems] = useState([])
+  const [bulkOperador, setBulkOperador] = useState('')
+  const [bulkMotivo, setBulkMotivo] = useState('')
+  const [bulkErrors, setBulkErrors] = useState({})
 
   useEffect(() => { cargar() }, [proyectoId])
 
@@ -36,19 +43,29 @@ export default function Articulos() {
       setArticulos(arts)
       setProyecto(proyects.find(p => p.id === parseInt(proyectoId)))
       setCategorias(cats)
-    } catch (e) {
+    } catch {
       showToast('Error al cargar', 'error')
     } finally {
       setLoading(false)
     }
   }
 
-  const articulosFiltrados = articulos.filter(a => {
-    const matchNombre = a.nombre.toLowerCase().includes(filtro.toLowerCase()) ||
-      (a.ubicacion || '').toLowerCase().includes(filtro.toLowerCase())
-    const matchCat = !filtroCat || a.categoria_id === parseInt(filtroCat)
-    return matchNombre && matchCat
-  })
+  const articulosFiltrados = (() => {
+    const list = articulos.filter(a => {
+      const matchNombre = a.nombre.toLowerCase().includes(filtro.toLowerCase()) ||
+        (a.ubicacion || '').toLowerCase().includes(filtro.toLowerCase())
+      const matchCat = !filtroCat || a.categoria_id === parseInt(filtroCat)
+      return matchNombre && matchCat
+    })
+    switch (ordenar) {
+      case 'nombre_desc': list.sort((a, b) => b.nombre.localeCompare(a.nombre)); break
+      case 'cantidad_asc': list.sort((a, b) => a.cantidad - b.cantidad); break
+      case 'cantidad_desc': list.sort((a, b) => b.cantidad - a.cantidad); break
+      case 'alertas': list.sort((a, b) => (b.bajo_minimo ? 1 : 0) - (a.bajo_minimo ? 1 : 0)); break
+      default: list.sort((a, b) => a.nombre.localeCompare(b.nombre)); break
+    }
+    return list
+  })()
 
   const bajosMinimo = articulos.filter(a => a.bajo_minimo).length
 
@@ -69,7 +86,7 @@ export default function Articulos() {
         stock_minimo: form.stock_minimo ? parseFloat(form.stock_minimo) : null,
         notas: form.notas || null,
       })
-      setArticulos(as => [...as, nuevo].sort((a, b) => a.nombre.localeCompare(b.nombre)))
+      setArticulos(as => [...as, nuevo])
       setShowModal(false)
       showToast('Artículo creado')
     } catch (e) {
@@ -100,23 +117,68 @@ export default function Articulos() {
     }
   }
 
-  async function handleEliminarProyecto() {
+  function handleEliminarProyecto() {
     setShowMenuProyecto(false)
-    if (!confirm(`¿Eliminar el proyecto "${proyecto.nombre}"? Se eliminarán todos sus artículos.`)) return
-    try {
-      await deleteProyecto(proyecto.id)
-      navigate('/')
-    } catch {
-      showToast('Error al eliminar', 'error')
-    }
+    setConfirmDlg({
+      title: '¿Eliminar proyecto?',
+      message: `Se eliminarán "${proyecto.nombre}" y todos sus artículos. Esta acción no se puede deshacer.`,
+      confirmLabel: 'Eliminar',
+      onConfirm: async () => {
+        setConfirmDlg(null)
+        try {
+          await deleteProyecto(proyecto.id)
+          navigate('/')
+        } catch {
+          showToast('Error al eliminar', 'error')
+        }
+      }
+    })
   }
 
   async function handleExportar() {
     try {
       await exportarExcel(proyectoId, proyecto?.nombre || 'proyecto')
       showToast('Excel generado')
-    } catch (e) {
+    } catch {
       showToast('Error al exportar', 'error')
+    }
+  }
+
+  function abrirBulk() {
+    setBulkItems(articulos.map(a => ({ ...a, nuevaCantidad: '' })))
+    setBulkOperador('')
+    setBulkMotivo('')
+    setBulkErrors({})
+    setShowBulkModal(true)
+  }
+
+  async function handleBulkGuardar() {
+    const errs = {}
+    if (!bulkOperador.trim()) errs.operador = 'El nombre es obligatorio'
+
+    const movimientos = bulkItems
+      .filter(a => a.nuevaCantidad !== '' && !isNaN(parseFloat(a.nuevaCantidad)) && parseFloat(a.nuevaCantidad) !== a.cantidad && parseFloat(a.nuevaCantidad) >= 0)
+      .map(a => {
+        const nueva = parseFloat(a.nuevaCantidad)
+        return {
+          articulo_id: a.id,
+          tipo: nueva > a.cantidad ? 'entrada' : 'salida',
+          cantidad: Math.abs(nueva - a.cantidad),
+          operador: bulkOperador,
+          motivo: bulkMotivo || null,
+        }
+      })
+
+    if (movimientos.length === 0) errs.items = 'Introduce al menos una cantidad diferente'
+    if (Object.keys(errs).length) { setBulkErrors(errs); return }
+
+    try {
+      await createMovimientosBulk(movimientos)
+      await cargar()
+      setShowBulkModal(false)
+      showToast(`${movimientos.length} artículo${movimientos.length !== 1 ? 's' : ''} actualizado${movimientos.length !== 1 ? 's' : ''}`)
+    } catch (e) {
+      showToast(e.message, 'error')
     }
   }
 
@@ -129,6 +191,8 @@ export default function Articulos() {
     setErrors({})
     setShowModal(true)
   }
+
+  const hayFiltrosActivos = filtroCat || ordenar !== 'nombre_asc'
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-950">
@@ -158,6 +222,11 @@ export default function Articulos() {
                   </div>
                 </div>
                 <DarkModeToggle dark={dark} onToggle={toggleDark} />
+                <button onClick={abrirBulk}
+                  className="p-2 rounded-xl hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+                  title="Ajuste masivo de stock">
+                  <Sliders size={18} />
+                </button>
                 {/* Menú del proyecto */}
                 <div className="relative">
                   <button
@@ -202,7 +271,7 @@ export default function Articulos() {
             </div>
             <button onClick={() => setShowFiltros(f => !f)}
               className={`px-3 py-2.5 rounded-xl border text-sm transition-colors ${
-                filtroCat
+                hayFiltrosActivos
                   ? 'border-blue-400 bg-blue-50 dark:bg-blue-900/30 text-blue-600'
                   : 'border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700'
               }`}>
@@ -211,11 +280,19 @@ export default function Articulos() {
           </div>
 
           {showFiltros && (
-            <div className="mt-2">
+            <div className="mt-2 flex gap-2">
               <select value={filtroCat} onChange={e => setFiltroCat(e.target.value)}
-                className="w-full px-3 py-2 rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 dark:text-gray-100 text-sm outline-none">
+                className="flex-1 px-3 py-2 rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 dark:text-gray-100 text-sm outline-none">
                 <option value="">Todas las categorías</option>
                 {categorias.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+              </select>
+              <select value={ordenar} onChange={e => setOrdenar(e.target.value)}
+                className="flex-1 px-3 py-2 rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 dark:text-gray-100 text-sm outline-none">
+                <option value="nombre_asc">Nombre A-Z</option>
+                <option value="nombre_desc">Nombre Z-A</option>
+                <option value="cantidad_asc">Cantidad ↑</option>
+                <option value="cantidad_desc">Cantidad ↓</option>
+                <option value="alertas">Alertas primero</option>
               </select>
             </div>
           )}
@@ -337,7 +414,66 @@ export default function Articulos() {
         </Modal>
       )}
 
+      {/* Modal ajuste masivo */}
+      {showBulkModal && (
+        <Modal title="Ajuste masivo de stock" onClose={() => setShowBulkModal(false)} size="xl">
+          <div className="space-y-4">
+            <p className="text-sm text-gray-500 dark:text-gray-400">
+              Introduce la nueva cantidad para los artículos que quieras ajustar. Los campos vacíos no se modificarán.
+            </p>
+
+            <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
+              {bulkItems.map((art, i) => (
+                <div key={art.id} className="flex items-center gap-3 py-2 border-b border-gray-100 dark:border-gray-800 last:border-0">
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-gray-800 dark:text-gray-100 truncate">{art.nombre}</p>
+                    <p className="text-xs text-gray-400 dark:text-gray-500">Actual: {art.cantidad} {art.unidad}</p>
+                  </div>
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      placeholder={String(art.cantidad)}
+                      value={art.nuevaCantidad}
+                      onChange={e => setBulkItems(items => items.map((it, j) => j === i ? { ...it, nuevaCantidad: e.target.value } : it))}
+                      className="w-24 px-2 py-1.5 rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 dark:text-gray-100 text-sm outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 text-right"
+                    />
+                    <span className="text-xs text-gray-400 dark:text-gray-500 w-8">{art.unidad}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {bulkErrors.items && <p className="text-xs text-red-500">{bulkErrors.items}</p>}
+
+            <div className="grid grid-cols-2 gap-3 pt-1">
+              <Input label="¿Quién realiza el ajuste? *"
+                value={bulkOperador} error={bulkErrors.operador}
+                onChange={e => setBulkOperador(e.target.value)}
+                placeholder="Tu nombre" />
+              <Input label="Motivo (opcional)"
+                value={bulkMotivo}
+                onChange={e => setBulkMotivo(e.target.value)}
+                placeholder="Inventario, corrección..." />
+            </div>
+
+            <div className="flex gap-3 pt-2">
+              <Button variant="ghost" onClick={() => setShowBulkModal(false)} className="flex-1">Cancelar</Button>
+              <Button onClick={handleBulkGuardar} className="flex-1">Aplicar ajuste</Button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
       {toast && <Toast {...toast} onClose={() => setToast(null)} />}
+
+      {confirmDlg && (
+        <ConfirmDialog
+          {...confirmDlg}
+          onCancel={() => setConfirmDlg(null)}
+        />
+      )}
 
       {/* Overlay para cerrar menú del proyecto */}
       {showMenuProyecto && (

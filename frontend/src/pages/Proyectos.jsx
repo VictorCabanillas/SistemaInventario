@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Plus, Package, Search, AlertTriangle, FolderOpen, MoreVertical, Edit2, Trash2, X, Download } from 'lucide-react'
-import { getProyectos, createProyecto, updateProyecto, deleteProyecto, buscar, exportarExcel } from '../utils/api'
-import { Modal, Button, Input, Toast, Spinner, EmptyState, ColorPicker, IconPicker, ProyectoIcon, Badge, DarkModeToggle } from '../components/ui'
+import { Plus, Package, Search, AlertTriangle, FolderOpen, MoreVertical, Edit2, Trash2, X, Download, Settings, Upload } from 'lucide-react'
+import { getProyectos, createProyecto, updateProyecto, deleteProyecto, buscar, exportarExcel, getCategorias, createCategoria, deleteCategoria, backupDB, restoreDB } from '../utils/api'
+import { Modal, Button, Input, Toast, Spinner, EmptyState, ColorPicker, IconPicker, ProyectoIcon, Badge, DarkModeToggle, ConfirmDialog } from '../components/ui'
 import { useDarkMode } from '../hooks/useDarkMode'
 
 export default function Proyectos() {
@@ -19,6 +19,13 @@ export default function Proyectos() {
   const [toast, setToast] = useState(null)
   const [form, setForm] = useState({ nombre: '', descripcion: '', color: '#3B82F6', icono: 'Package' })
   const [errors, setErrors] = useState({})
+  const [confirmDlg, setConfirmDlg] = useState(null)
+
+  // Settings
+  const [showSettings, setShowSettings] = useState(false)
+  const [categorias, setCategorias] = useState([])
+  const [nuevaCat, setNuevaCat] = useState('')
+  const [loadingCats, setLoadingCats] = useState(false)
 
   useEffect(() => { cargar() }, [])
 
@@ -32,7 +39,7 @@ export default function Proyectos() {
     try {
       const data = await getProyectos()
       setProyectos(data)
-    } catch (e) {
+    } catch {
       showToast('Error al cargar proyectos', 'error')
     } finally {
       setLoading(false)
@@ -42,14 +49,9 @@ export default function Proyectos() {
   async function realizarBusqueda(q) {
     if (!q.trim()) return
     setBuscando(true)
-    try {
-      const res = await buscar(q)
-      setResultadosBusqueda(res)
-    } catch (e) {
-      setResultadosBusqueda([])
-    } finally {
-      setBuscando(false)
-    }
+    try { setResultadosBusqueda(await buscar(q)) }
+    catch { setResultadosBusqueda([]) }
+    finally { setBuscando(false) }
   }
 
   function abrirCrear() {
@@ -71,32 +73,32 @@ export default function Proyectos() {
   async function handleExportar(p, e) {
     e.stopPropagation()
     setMenuAbierto(null)
-    try {
-      await exportarExcel(p.id, p.nombre)
-      showToast('Excel generado')
-    } catch {
-      showToast('Error al exportar', 'error')
-    }
+    try { await exportarExcel(p.id, p.nombre); showToast('Excel generado') }
+    catch { showToast('Error al exportar', 'error') }
   }
 
-  async function handleEliminar(p, e) {
+  function handleEliminar(p, e) {
     e.stopPropagation()
     setMenuAbierto(null)
-    if (!confirm(`¿Eliminar el proyecto "${p.nombre}"? Se eliminarán todos sus artículos.`)) return
-    try {
-      await deleteProyecto(p.id)
-      setProyectos(ps => ps.filter(x => x.id !== p.id))
-      showToast('Proyecto eliminado')
-    } catch (e) {
-      showToast(e.message, 'error')
-    }
+    setConfirmDlg({
+      title: `¿Eliminar "${p.nombre}"?`,
+      message: 'Se eliminarán todos sus artículos y no se puede deshacer.',
+      confirmLabel: 'Eliminar proyecto',
+      onConfirm: async () => {
+        setConfirmDlg(null)
+        try {
+          await deleteProyecto(p.id)
+          setProyectos(ps => ps.filter(x => x.id !== p.id))
+          showToast('Proyecto eliminado')
+        } catch (e) { showToast(e.message, 'error') }
+      }
+    })
   }
 
   async function handleGuardar() {
     const errs = {}
     if (!form.nombre.trim()) errs.nombre = 'El nombre es obligatorio'
     if (Object.keys(errs).length) { setErrors(errs); return }
-
     try {
       if (editando) {
         const updated = await updateProyecto(editando.id, form)
@@ -108,14 +110,67 @@ export default function Proyectos() {
         showToast('Proyecto creado')
       }
       setShowModal(false)
-    } catch (e) {
-      showToast(e.message, 'error')
-    }
+    } catch (e) { showToast(e.message, 'error') }
   }
 
-  function showToast(message, type = 'success') {
-    setToast({ message, type })
+  // ── Settings ──────────────────────────────────────────────
+  async function abrirSettings() {
+    setShowSettings(true)
+    setLoadingCats(true)
+    try { setCategorias(await getCategorias()) }
+    catch { showToast('Error al cargar categorías', 'error') }
+    finally { setLoadingCats(false) }
   }
+
+  async function handleAddCat() {
+    if (!nuevaCat.trim()) return
+    try {
+      const cat = await createCategoria({ nombre: nuevaCat.trim() })
+      setCategorias(cs => [...cs, cat].sort((a, b) => a.nombre.localeCompare(b.nombre)))
+      setNuevaCat('')
+    } catch (e) { showToast(e.message, 'error') }
+  }
+
+  function handleDeleteCat(cat) {
+    setConfirmDlg({
+      title: `¿Eliminar "${cat.nombre}"?`,
+      message: 'Los artículos con esta categoría quedarán sin categoría.',
+      confirmLabel: 'Eliminar',
+      onConfirm: async () => {
+        setConfirmDlg(null)
+        try {
+          await deleteCategoria(cat.id)
+          setCategorias(cs => cs.filter(c => c.id !== cat.id))
+        } catch (e) { showToast(e.message, 'error') }
+      }
+    })
+  }
+
+  async function handleBackup() {
+    try { await backupDB(); showToast('Backup descargado') }
+    catch { showToast('Error al generar backup', 'error') }
+  }
+
+  async function handleRestore(e) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    e.target.value = ''
+    setConfirmDlg({
+      title: '¿Restaurar base de datos?',
+      message: 'Esto reemplazará todos los datos actuales con el backup. La página se recargará.',
+      confirmLabel: 'Restaurar',
+      onConfirm: async () => {
+        setConfirmDlg(null)
+        try {
+          await restoreDB(file)
+          showToast('Base de datos restaurada. Recargando...')
+          setTimeout(() => window.location.reload(), 1500)
+        } catch (e) { showToast(e.message, 'error') }
+      }
+    })
+  }
+
+  function showToast(message, type = 'success') { setToast({ message, type }) }
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-950">
@@ -132,18 +187,21 @@ export default function Proyectos() {
                 <p className="text-xs text-gray-400 dark:text-gray-500">{proyectos.length} proyecto{proyectos.length !== 1 ? 's' : ''}</p>
               </div>
             </div>
-            <DarkModeToggle dark={dark} onToggle={toggleDark} />
+            <div className="flex items-center gap-1">
+              <DarkModeToggle dark={dark} onToggle={toggleDark} />
+              <button onClick={abrirSettings}
+                className="p-2 rounded-xl hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors text-gray-500 dark:text-gray-400"
+                title="Configuración">
+                <Settings size={18} />
+              </button>
+            </div>
           </div>
 
-          {/* Buscador global */}
           <div className="relative">
             <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-            <input
-              value={busqueda}
-              onChange={e => setBusqueda(e.target.value)}
+            <input value={busqueda} onChange={e => setBusqueda(e.target.value)}
               placeholder="Buscar artículos en todos los proyectos..."
-              className="w-full pl-9 pr-10 py-2.5 rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-gray-500 text-sm outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
-            />
+              className="w-full pl-9 pr-10 py-2.5 rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-gray-500 text-sm outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500" />
             {busqueda && (
               <button onClick={() => { setBusqueda(''); setResultadosBusqueda(null) }}
                 className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">
@@ -155,7 +213,6 @@ export default function Proyectos() {
       </div>
 
       <div className="max-w-4xl mx-auto px-4 py-6">
-        {/* Resultados de búsqueda */}
         {resultadosBusqueda !== null ? (
           <div>
             <p className="text-sm text-gray-500 dark:text-gray-400 mb-3">
@@ -192,46 +249,31 @@ export default function Proyectos() {
             )}
           </div>
         ) : (
-          /* Lista de proyectos */
           loading ? <Spinner /> : proyectos.length === 0 ? (
-            <EmptyState
-              icon={FolderOpen}
-              title="Sin proyectos"
-              description="Crea tu primer proyecto para empezar"
-              action={<Button onClick={abrirCrear}>Crear proyecto</Button>}
-            />
+            <EmptyState icon={FolderOpen} title="Sin proyectos" description="Crea tu primer proyecto para empezar"
+              action={<Button onClick={abrirCrear}>Crear proyecto</Button>} />
           ) : (
             <div className="space-y-3">
               {proyectos.map(p => (
-                <div key={p.id}
-                  onClick={() => navigate(`/proyectos/${p.id}`)}
+                <div key={p.id} onClick={() => navigate(`/proyectos/${p.id}`)}
                   className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-700 p-5 cursor-pointer hover:border-gray-300 dark:hover:border-gray-600 hover:shadow-md transition-all group relative">
-
                   <div className="flex items-start gap-4">
-                    {/* Icono del proyecto */}
                     <div className="w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0"
                       style={{ backgroundColor: p.color + '20' }}>
                       <ProyectoIcon icono={p.icono} color={p.color} size={22} />
                     </div>
-
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 mb-1">
                         <h2 className="font-semibold text-gray-900 dark:text-gray-100">{p.nombre}</h2>
                         {p.articulos_bajo_minimo > 0 && (
-                          <Badge color="red">
-                            <AlertTriangle size={10} className="mr-1" />
-                            {p.articulos_bajo_minimo} bajo mínimo
-                          </Badge>
+                          <Badge color="red"><AlertTriangle size={10} className="mr-1" />{p.articulos_bajo_minimo} bajo mínimo</Badge>
                         )}
                       </div>
                       {p.descripcion && <p className="text-sm text-gray-400 dark:text-gray-500 truncate">{p.descripcion}</p>}
                       <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">{p.total_articulos} artículo{p.total_articulos !== 1 ? 's' : ''}</p>
                     </div>
-
-                    {/* Menu */}
                     <div className="relative">
-                      <button
-                        onClick={e => { e.stopPropagation(); setMenuAbierto(menuAbierto === p.id ? null : p.id) }}
+                      <button onClick={e => { e.stopPropagation(); setMenuAbierto(menuAbierto === p.id ? null : p.id) }}
                         className="p-1.5 rounded-lg opacity-0 group-hover:opacity-100 hover:bg-gray-100 dark:hover:bg-gray-800 transition-all">
                         <MoreVertical size={16} className="text-gray-500 dark:text-gray-400" />
                       </button>
@@ -261,7 +303,6 @@ export default function Proyectos() {
         )}
       </div>
 
-      {/* FAB */}
       {resultadosBusqueda === null && (
         <button onClick={abrirCrear}
           className="fixed bottom-6 right-6 w-14 h-14 bg-blue-600 hover:bg-blue-700 text-white rounded-full shadow-lg flex items-center justify-center transition-all hover:scale-105 active:scale-95">
@@ -287,9 +328,60 @@ export default function Proyectos() {
         </Modal>
       )}
 
-      {toast && <Toast {...toast} onClose={() => setToast(null)} />}
+      {/* Modal configuración */}
+      {showSettings && (
+        <Modal title="Configuración" onClose={() => setShowSettings(false)} size="lg">
+          <div className="space-y-6">
+            {/* Backup */}
+            <div>
+              <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wide mb-3">Copia de seguridad</h3>
+              <div className="flex gap-3">
+                <Button variant="outline" onClick={handleBackup} className="flex-1 flex items-center justify-center gap-2">
+                  <Download size={15} /> Descargar backup
+                </Button>
+                <label className="flex-1">
+                  <div className="w-full px-4 py-2.5 text-sm rounded-xl font-medium border border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-800 text-gray-700 dark:text-gray-300 cursor-pointer flex items-center justify-center gap-2 transition-colors">
+                    <Upload size={15} /> Restaurar backup
+                  </div>
+                  <input type="file" accept=".db" className="hidden" onChange={handleRestore} />
+                </label>
+              </div>
+              <p className="text-xs text-gray-400 dark:text-gray-500 mt-2">El backup es el archivo de base de datos SQLite completo.</p>
+            </div>
 
-      {/* Cerrar menú al hacer click fuera */}
+            <div className="border-t border-gray-100 dark:border-gray-800" />
+
+            {/* Categorías */}
+            <div>
+              <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wide mb-3">Categorías</h3>
+              {loadingCats ? <Spinner /> : (
+                <div className="space-y-2">
+                  <div className="flex gap-2">
+                    <Input value={nuevaCat} onChange={e => setNuevaCat(e.target.value)}
+                      placeholder="Nueva categoría..."
+                      onKeyDown={e => e.key === 'Enter' && handleAddCat()} />
+                    <Button onClick={handleAddCat} disabled={!nuevaCat.trim()}>Añadir</Button>
+                  </div>
+                  <div className="space-y-1 max-h-48 overflow-y-auto">
+                    {categorias.map(cat => (
+                      <div key={cat.id} className="flex items-center justify-between px-3 py-2 rounded-xl bg-gray-50 dark:bg-gray-800 group">
+                        <span className="text-sm text-gray-700 dark:text-gray-300">{cat.nombre}</span>
+                        <button onClick={() => handleDeleteCat(cat)}
+                          className="opacity-0 group-hover:opacity-100 p-1 rounded-lg hover:bg-red-100 dark:hover:bg-red-900 transition-all">
+                          <X size={13} className="text-red-500" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {confirmDlg && <ConfirmDialog {...confirmDlg} onCancel={() => setConfirmDlg(null)} />}
+      {toast && <Toast {...toast} onClose={() => setToast(null)} />}
       {menuAbierto && <div className="fixed inset-0 z-0" onClick={() => setMenuAbierto(null)} />}
     </div>
   )

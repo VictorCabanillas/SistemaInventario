@@ -38,6 +38,35 @@ export const deleteCategoria = (id) => request(`/categorias/${id}`, { method: 'D
 // Búsqueda
 export const buscar = (q) => request(`/buscar?q=${encodeURIComponent(q)}`)
 
+// Movimientos bulk
+export const createMovimientosBulk = (data) => request('/movimientos/bulk', { method: 'POST', body: JSON.stringify(data) })
+
+// Backup / Restore
+export const backupDB = async () => {
+  const res = await fetch('/api/backup')
+  if (!res.ok) throw new Error('Error al generar backup')
+  const blob = await res.blob()
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  const d = new Date()
+  const f = `${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}`
+  a.download = `inventario_backup_${f}.db`
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
+export const restoreDB = async (file) => {
+  const fd = new FormData()
+  fd.append('file', file)
+  const res = await fetch('/api/restore', { method: 'POST', body: fd })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: 'Error al restaurar' }))
+    throw new Error(err.detail)
+  }
+  return res.json()
+}
+
 // Exportar
 export const exportarExcel = async (proyectoId, nombreProyecto) => {
   const res = await fetch(`${BASE}/proyectos/${proyectoId}/exportar`)

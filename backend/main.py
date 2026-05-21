@@ -1,10 +1,12 @@
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, StreamingResponse
 from typing import List, Optional
 import os
 import io
+import shutil
+import tempfile
 
 ICONOS_DIR = os.path.join(os.path.dirname(__file__), "iconos")
 
@@ -331,6 +333,74 @@ def buscar(q: str = Query(..., min_length=1)):
     """, (f"%{q}%", f"%{q}%", f"%{q}%")).fetchall()
     db.close()
     return [dict(r) for r in rows]
+
+
+# ─────────────────────────────────────────
+# MOVIMIENTOS EN BULK
+# ─────────────────────────────────────────
+
+@app.post("/api/movimientos/bulk", response_model=List[Articulo], status_code=201)
+def create_movimientos_bulk(movimientos: List[MovimientoCreate]):
+    db = get_db()
+    resultados = []
+    try:
+        for data in movimientos:
+            articulo = db.execute("SELECT * FROM articulos WHERE id=?", (data.articulo_id,)).fetchone()
+            if not articulo:
+                raise HTTPException(404, f"Artículo {data.articulo_id} no encontrado")
+            nueva = articulo["cantidad"] + data.cantidad if data.tipo == "entrada" else articulo["cantidad"] - data.cantidad
+            if nueva < 0:
+                raise HTTPException(400, f"Stock insuficiente para '{articulo['nombre']}' (actual: {articulo['cantidad']})")
+            db.execute(
+                "INSERT INTO movimientos (articulo_id, tipo, cantidad, motivo, operador) VALUES (?,?,?,?,?)",
+                (data.articulo_id, data.tipo, data.cantidad, data.motivo, data.operador)
+            )
+            db.execute("UPDATE articulos SET cantidad=?, updated_at=datetime('now') WHERE id=?", (nueva, data.articulo_id))
+        db.commit()
+        for data in movimientos:
+            row = db.execute("""
+                SELECT a.*, c.nombre as categoria_nombre,
+                       CASE WHEN a.stock_minimo IS NOT NULL AND a.cantidad < a.stock_minimo THEN 1 ELSE 0 END as bajo_minimo
+                FROM articulos a LEFT JOIN categorias c ON c.id = a.categoria_id WHERE a.id=?
+            """, (data.articulo_id,)).fetchone()
+            if row:
+                resultados.append(dict(row))
+    finally:
+        db.close()
+    return resultados
+
+
+# ─────────────────────────────────────────
+# BACKUP / RESTORE
+# ─────────────────────────────────────────
+
+@app.get("/api/backup")
+def backup_db():
+    if not os.path.exists(DB_PATH):
+        raise HTTPException(404, "Base de datos no encontrada")
+    from datetime import datetime
+    fecha = datetime.now().strftime("%Y%m%d_%H%M%S")
+    return FileResponse(
+        DB_PATH,
+        media_type="application/octet-stream",
+        headers={"Content-Disposition": f"attachment; filename=inventario_backup_{fecha}.db"}
+    )
+
+@app.post("/api/restore")
+async def restore_db(file: UploadFile = File(...)):
+    content = await file.read()
+    if not content.startswith(b"SQLite format 3"):
+        raise HTTPException(400, "El archivo no es una base de datos SQLite válida")
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".db") as tmp:
+        tmp.write(content)
+        tmp_path = tmp.name
+    try:
+        shutil.move(tmp_path, DB_PATH)
+    except Exception as e:
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+        raise HTTPException(500, f"Error al restaurar: {e}")
+    return {"message": "Base de datos restaurada. Recarga la aplicación."}
 
 
 # ─────────────────────────────────────────

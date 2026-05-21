@@ -48,6 +48,7 @@ class ArticuloCreate(BaseModel):
     notas: Optional[str] = None
 
 class ArticuloUpdate(BaseModel):
+    proyecto_id: Optional[int] = None
     categoria_id: Optional[int] = None
     nombre: Optional[str] = None
     unidad: Optional[str] = None

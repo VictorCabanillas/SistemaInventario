@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { ArrowLeft, Plus, Minus, Edit2, Trash2, AlertTriangle, Clock, Package, ChevronDown, ChevronUp } from 'lucide-react'
-import { getArticulo, updateArticulo, deleteArticulo, createMovimiento, getMovimientos, getCategorias } from '../utils/api'
-import { Modal, Button, Input, Select, Toast, Spinner, Badge, DarkModeToggle } from '../components/ui'
+import { ArrowLeft, Plus, Minus, Edit2, Trash2, AlertTriangle, Clock, Package, ChevronDown, ChevronUp, ArrowRightLeft } from 'lucide-react'
+import { getArticulo, updateArticulo, deleteArticulo, createMovimiento, getMovimientos, getCategorias, getProyectos } from '../utils/api'
+import { Modal, Button, Input, Select, Toast, Spinner, Badge, DarkModeToggle, ConfirmDialog } from '../components/ui'
 import { useDarkMode } from '../hooks/useDarkMode'
 
 export default function DetalleArticulo() {
@@ -11,11 +11,13 @@ export default function DetalleArticulo() {
   const [dark, toggleDark] = useDarkMode()
   const [articulo, setArticulo] = useState(null)
   const [categorias, setCategorias] = useState([])
+  const [proyectos, setProyectos] = useState([])
   const [movimientos, setMovimientos] = useState([])
   const [loading, setLoading] = useState(true)
   const [showHistorial, setShowHistorial] = useState(false)
   const [modal, setModal] = useState(null)
   const [toast, setToast] = useState(null)
+  const [confirmDlg, setConfirmDlg] = useState(null)
 
   const [formInfo, setFormInfo] = useState({})
   const [errorsInfo, setErrorsInfo] = useState({})
@@ -23,18 +25,22 @@ export default function DetalleArticulo() {
   const [formStock, setFormStock] = useState({ tipo: 'entrada', cantidad: '', operador: '', motivo: '' })
   const [errorsStock, setErrorsStock] = useState({})
 
+  const [proyectoDestino, setProyectoDestino] = useState('')
+
   useEffect(() => { cargar() }, [articuloId])
 
   async function cargar() {
     try {
-      const [art, cats, movs] = await Promise.all([
+      const [art, cats, movs, proyects] = await Promise.all([
         getArticulo(articuloId),
         getCategorias(),
-        getMovimientos(articuloId)
+        getMovimientos(articuloId),
+        getProyectos()
       ])
       setArticulo(art)
       setCategorias(cats)
       setMovimientos(movs)
+      setProyectos(proyects)
       setFormInfo({
         nombre: art.nombre,
         categoria_id: art.categoria_id || '',
@@ -43,7 +49,7 @@ export default function DetalleArticulo() {
         stock_minimo: art.stock_minimo || '',
         notas: art.notas || ''
       })
-    } catch (e) {
+    } catch {
       showToast('Error al cargar artículo', 'error')
     } finally {
       setLoading(false)
@@ -97,12 +103,30 @@ export default function DetalleArticulo() {
     }
   }
 
-  async function handleEliminar() {
-    if (!confirm(`¿Eliminar "${articulo.nombre}"? Esta acción no se puede deshacer.`)) return
+  function handleEliminar() {
+    setConfirmDlg({
+      title: '¿Eliminar artículo?',
+      message: `Se eliminará "${articulo.nombre}" y todo su historial. Esta acción no se puede deshacer.`,
+      confirmLabel: 'Eliminar',
+      onConfirm: async () => {
+        setConfirmDlg(null)
+        try {
+          await deleteArticulo(articuloId)
+          showToast('Artículo eliminado')
+          setTimeout(() => navigate(`/proyectos/${proyectoId}`), 500)
+        } catch (e) {
+          showToast(e.message, 'error')
+        }
+      }
+    })
+  }
+
+  async function handleMover() {
+    if (!proyectoDestino) return
     try {
-      await deleteArticulo(articuloId)
-      showToast('Artículo eliminado')
-      setTimeout(() => navigate(`/proyectos/${proyectoId}`), 500)
+      await updateArticulo(articuloId, { proyecto_id: parseInt(proyectoDestino) })
+      showToast('Artículo movido')
+      setTimeout(() => navigate(`/proyectos/${proyectoDestino}`), 500)
     } catch (e) {
       showToast(e.message, 'error')
     }
@@ -112,6 +136,11 @@ export default function DetalleArticulo() {
     setFormStock({ tipo, cantidad: '', operador: '', motivo: '' })
     setErrorsStock({})
     setModal('stock')
+  }
+
+  function abrirMover() {
+    setProyectoDestino('')
+    setModal('mover')
   }
 
   function showToast(message, type = 'success') {
@@ -126,6 +155,7 @@ export default function DetalleArticulo() {
   if (!articulo) return null
 
   const bajominimo = articulo.bajo_minimo
+  const otrosProyectos = proyectos.filter(p => p.id !== parseInt(proyectoId))
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-950">
@@ -141,6 +171,13 @@ export default function DetalleArticulo() {
             <p className="text-xs text-gray-400 dark:text-gray-500">{articulo.categoria_nombre || 'Sin categoría'}</p>
           </div>
           <DarkModeToggle dark={dark} onToggle={toggleDark} />
+          {otrosProyectos.length > 0 && (
+            <button onClick={abrirMover}
+              className="p-2 rounded-xl hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+              title="Mover a otro proyecto">
+              <ArrowRightLeft size={16} className="text-gray-400" />
+            </button>
+          )}
           <button onClick={handleEliminar} className="p-2 rounded-xl hover:bg-red-50 dark:hover:bg-red-950 transition-colors">
             <Trash2 size={16} className="text-red-400" />
           </button>
@@ -168,7 +205,6 @@ export default function DetalleArticulo() {
             <div className="text-xs text-gray-400 dark:text-gray-500 mt-1">Mínimo: {articulo.stock_minimo} {articulo.unidad}</div>
           )}
 
-          {/* Botones de stock */}
           <div className="flex gap-3 mt-6">
             <button onClick={() => abrirStock('salida')}
               className="flex-1 flex items-center justify-center gap-2 py-3 rounded-xl bg-red-600 hover:bg-red-700 text-white font-semibold transition-colors">
@@ -359,7 +395,34 @@ export default function DetalleArticulo() {
         </Modal>
       )}
 
+      {/* Modal mover a otro proyecto */}
+      {modal === 'mover' && (
+        <Modal title="Mover a otro proyecto" onClose={() => setModal(null)} size="sm">
+          <div className="space-y-4">
+            <p className="text-sm text-gray-500 dark:text-gray-400">
+              Selecciona el proyecto de destino para <strong className="text-gray-700 dark:text-gray-300">{articulo.nombre}</strong>.
+            </p>
+            <Select label="Proyecto de destino" value={proyectoDestino}
+              onChange={e => setProyectoDestino(e.target.value)}>
+              <option value="">Selecciona un proyecto...</option>
+              {otrosProyectos.map(p => <option key={p.id} value={p.id}>{p.nombre}</option>)}
+            </Select>
+            <div className="flex gap-3 pt-2">
+              <Button variant="ghost" onClick={() => setModal(null)} className="flex-1">Cancelar</Button>
+              <Button onClick={handleMover} disabled={!proyectoDestino} className="flex-1">Mover</Button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
       {toast && <Toast {...toast} onClose={() => setToast(null)} />}
+
+      {confirmDlg && (
+        <ConfirmDialog
+          {...confirmDlg}
+          onCancel={() => setConfirmDlg(null)}
+        />
+      )}
     </div>
   )
 }
