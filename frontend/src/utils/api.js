@@ -35,6 +35,16 @@ export const getCategorias = () => request('/categorias')
 export const createCategoria = (data) => request('/categorias', { method: 'POST', body: JSON.stringify(data) })
 export const deleteCategoria = (id) => request(`/categorias/${id}`, { method: 'DELETE' })
 
+// Salas
+export const getSalas = () => request('/salas')
+export const createSala = (data) => request('/salas', { method: 'POST', body: JSON.stringify(data) })
+export const deleteSala = (id) => request(`/salas/${id}`, { method: 'DELETE' })
+
+// Operadores
+export const getOperadores = () => request('/operadores')
+export const createOperador = (data) => request('/operadores', { method: 'POST', body: JSON.stringify(data) })
+export const deleteOperador = (id) => request(`/operadores/${id}`, { method: 'DELETE' })
+
 // Búsqueda
 export const buscar = (q) => request(`/buscar?q=${encodeURIComponent(q)}`)
 

@@ -1,6 +1,5 @@
 import sqlite3
 import os
-from datetime import datetime
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "inventario.db")
 
@@ -23,6 +22,16 @@ def init_db():
             created_at TEXT DEFAULT (datetime('now'))
         );
 
+        CREATE TABLE IF NOT EXISTS salas (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            nombre TEXT NOT NULL UNIQUE
+        );
+
+        CREATE TABLE IF NOT EXISTS operadores (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            nombre TEXT NOT NULL UNIQUE
+        );
+
         CREATE TABLE IF NOT EXISTS proyectos (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             nombre TEXT NOT NULL,
@@ -36,6 +45,7 @@ def init_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             proyecto_id INTEGER NOT NULL,
             categoria_id INTEGER,
+            sala_id INTEGER,
             nombre TEXT NOT NULL,
             cantidad REAL NOT NULL DEFAULT 0,
             unidad TEXT DEFAULT 'ud',
@@ -45,7 +55,8 @@ def init_db():
             created_at TEXT DEFAULT (datetime('now')),
             updated_at TEXT DEFAULT (datetime('now')),
             FOREIGN KEY (proyecto_id) REFERENCES proyectos(id) ON DELETE CASCADE,
-            FOREIGN KEY (categoria_id) REFERENCES categorias(id) ON DELETE SET NULL
+            FOREIGN KEY (categoria_id) REFERENCES categorias(id) ON DELETE SET NULL,
+            FOREIGN KEY (sala_id) REFERENCES salas(id) ON DELETE SET NULL
         );
 
         CREATE TABLE IF NOT EXISTS movimientos (
@@ -60,22 +71,26 @@ def init_db():
         );
     """)
 
-    # Migración: añadir columna icono si no existe (DBs anteriores)
-    try:
-        cursor.execute("ALTER TABLE proyectos ADD COLUMN icono TEXT DEFAULT 'Package'")
-        conn.commit()
-    except Exception:
-        pass
-
-    # Seed data: categorías por defecto
-    categorias_default = [
-        "Tornillería", "Electrónica", "Herramientas", "Consumibles",
-        "Cables y conectores", "Protección", "Materiales", "Otros"
+    # Migraciones para DBs anteriores
+    migraciones = [
+        "ALTER TABLE proyectos ADD COLUMN icono TEXT DEFAULT 'Package'",
+        "ALTER TABLE articulos ADD COLUMN sala_id INTEGER REFERENCES salas(id) ON DELETE SET NULL",
     ]
-    for cat in categorias_default:
-        cursor.execute(
-            "INSERT OR IGNORE INTO categorias (nombre) VALUES (?)", (cat,)
-        )
+    for sql in migraciones:
+        try:
+            cursor.execute(sql)
+            conn.commit()
+        except Exception:
+            pass
+
+    # Seed: categorías por defecto
+    for cat in ["Tornillería", "Electrónica", "Herramientas", "Consumibles",
+                "Cables y conectores", "Protección", "Materiales", "Otros"]:
+        cursor.execute("INSERT OR IGNORE INTO categorias (nombre) VALUES (?)", (cat,))
+
+    # Seed: salas por defecto
+    for sala in ["1 Departamento Ingeniería", "2 Taller", "3 Sala Impresoras"]:
+        cursor.execute("INSERT OR IGNORE INTO salas (nombre) VALUES (?)", (sala,))
 
     conn.commit()
     conn.close()

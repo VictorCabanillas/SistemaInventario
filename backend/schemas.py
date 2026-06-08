@@ -1,6 +1,5 @@
 from pydantic import BaseModel, Field
 from typing import Optional
-from datetime import datetime
 
 
 # --- Categorías ---
@@ -8,6 +7,24 @@ class CategoriaCreate(BaseModel):
     nombre: str
 
 class Categoria(BaseModel):
+    id: int
+    nombre: str
+
+
+# --- Salas ---
+class SalaCreate(BaseModel):
+    nombre: str
+
+class Sala(BaseModel):
+    id: int
+    nombre: str
+
+
+# --- Operadores ---
+class OperadorCreate(BaseModel):
+    nombre: str
+
+class Operador(BaseModel):
     id: int
     nombre: str
 
@@ -40,6 +57,7 @@ class Proyecto(BaseModel):
 class ArticuloCreate(BaseModel):
     proyecto_id: int
     categoria_id: Optional[int] = None
+    sala_id: Optional[int] = None
     nombre: str
     cantidad: float = 0
     unidad: Optional[str] = "ud"
@@ -50,6 +68,7 @@ class ArticuloCreate(BaseModel):
 class ArticuloUpdate(BaseModel):
     proyecto_id: Optional[int] = None
     categoria_id: Optional[int] = None
+    sala_id: Optional[int] = None
     nombre: Optional[str] = None
     unidad: Optional[str] = None
     ubicacion: Optional[str] = None
@@ -61,6 +80,8 @@ class Articulo(BaseModel):
     proyecto_id: int
     categoria_id: Optional[int]
     categoria_nombre: Optional[str]
+    sala_id: Optional[int]
+    sala_nombre: Optional[str]
     nombre: str
     cantidad: float
     unidad: str
@@ -99,6 +120,7 @@ class ResultadoBusqueda(BaseModel):
     cantidad: float
     unidad: str
     ubicacion: Optional[str]
+    sala_nombre: Optional[str]
     bajo_minimo: bool
     proyecto_id: int
     proyecto_nombre: str

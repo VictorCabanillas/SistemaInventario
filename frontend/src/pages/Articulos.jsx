@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { Plus, ArrowLeft, AlertTriangle, Package, Search, X, Download, Filter, MoreVertical, Edit2, Trash2, Sliders, ArrowUpDown } from 'lucide-react'
-import { getArticulos, getProyectos, getCategorias, createArticulo, exportarExcel, updateProyecto, deleteProyecto, createMovimientosBulk } from '../utils/api'
+import { getArticulos, getProyectos, getCategorias, getSalas, getOperadores, createArticulo, exportarExcel, updateProyecto, deleteProyecto, createMovimientosBulk } from '../utils/api'
 import { Spinner, EmptyState, Toast, Badge, Modal, Input, Select, Button, ProyectoIcon, ColorPicker, IconPicker, DarkModeToggle, ConfirmDialog } from '../components/ui'
 import { useDarkMode } from '../hooks/useDarkMode'
 
@@ -12,6 +12,8 @@ export default function Articulos() {
   const [articulos, setArticulos] = useState([])
   const [proyecto, setProyecto] = useState(null)
   const [categorias, setCategorias] = useState([])
+  const [salas, setSalas] = useState([])
+  const [operadores, setOperadores] = useState([])
   const [loading, setLoading] = useState(true)
   const [filtro, setFiltro] = useState('')
   const [filtroCat, setFiltroCat] = useState('')
@@ -24,7 +26,7 @@ export default function Articulos() {
   const [formProyecto, setFormProyecto] = useState({ nombre: '', descripcion: '', color: '#3B82F6', icono: 'Package' })
   const [toast, setToast] = useState(null)
   const [confirmDlg, setConfirmDlg] = useState(null)
-  const [form, setForm] = useState({ nombre: '', categoria_id: '', cantidad: '', unidad: 'ud', ubicacion: '', stock_minimo: '', notas: '' })
+  const [form, setForm] = useState({ nombre: '', categoria_id: '', sala_id: '', cantidad: '', unidad: 'ud', ubicacion: '', stock_minimo: '', notas: '' })
   const [errors, setErrors] = useState({})
   const [bulkItems, setBulkItems] = useState([])
   const [bulkOperador, setBulkOperador] = useState('')
@@ -35,14 +37,18 @@ export default function Articulos() {
 
   async function cargar() {
     try {
-      const [arts, proyects, cats] = await Promise.all([
+      const [arts, proyects, cats, sls, ops] = await Promise.all([
         getArticulos(proyectoId),
         getProyectos(),
-        getCategorias()
+        getCategorias(),
+        getSalas(),
+        getOperadores()
       ])
       setArticulos(arts)
       setProyecto(proyects.find(p => p.id === parseInt(proyectoId)))
       setCategorias(cats)
+      setSalas(sls)
+      setOperadores(ops)
     } catch {
       showToast('Error al cargar', 'error')
     } finally {
@@ -80,6 +86,7 @@ export default function Articulos() {
         proyecto_id: parseInt(proyectoId),
         nombre: form.nombre,
         categoria_id: form.categoria_id ? parseInt(form.categoria_id) : null,
+        sala_id: form.sala_id ? parseInt(form.sala_id) : null,
         cantidad: parseFloat(form.cantidad),
         unidad: form.unidad || 'ud',
         ubicacion: form.ubicacion || null,
@@ -187,7 +194,7 @@ export default function Articulos() {
   }
 
   function abrirCrear() {
-    setForm({ nombre: '', categoria_id: '', cantidad: '0', unidad: 'ud', ubicacion: '', stock_minimo: '', notas: '' })
+    setForm({ nombre: '', categoria_id: '', sala_id: '', cantidad: '0', unidad: 'ud', ubicacion: '', stock_minimo: '', notas: '' })
     setErrors({})
     setShowModal(true)
   }
@@ -324,7 +331,11 @@ export default function Articulos() {
                   </div>
                   <div className="flex items-center gap-2 flex-wrap">
                     {art.categoria_nombre && <Badge>{art.categoria_nombre}</Badge>}
-                    {art.ubicacion && <span className="text-xs text-gray-400 dark:text-gray-500">📍 {art.ubicacion}</span>}
+                    {(art.sala_nombre || art.ubicacion) && (
+                      <span className="text-xs text-gray-400 dark:text-gray-500">
+                        📍 {[art.sala_nombre, art.ubicacion].filter(Boolean).join(' · ')}
+                      </span>
+                    )}
                   </div>
                 </div>
 
@@ -370,8 +381,15 @@ export default function Articulos() {
                 onChange={e => setForm(f => ({ ...f, unidad: e.target.value }))} placeholder="ud, kg, m..." />
             </div>
 
-            <Input label="Ubicación" value={form.ubicacion}
-              onChange={e => setForm(f => ({ ...f, ubicacion: e.target.value }))} placeholder="Estantería A-3, Caja 7..." />
+            <div className="grid grid-cols-2 gap-3">
+              <Select label="Sala" value={form.sala_id}
+                onChange={e => setForm(f => ({ ...f, sala_id: e.target.value }))}>
+                <option value="">Sin sala</option>
+                {salas.map(s => <option key={s.id} value={s.id}>{s.nombre}</option>)}
+              </Select>
+              <Input label="Armario / Balda" value={form.ubicacion}
+                onChange={e => setForm(f => ({ ...f, ubicacion: e.target.value }))} placeholder="Ej: B/2" />
+            </div>
 
             <Input label="Stock mínimo (opcional)" type="number" min="0" step="0.01"
               value={form.stock_minimo}
@@ -448,10 +466,11 @@ export default function Articulos() {
             {bulkErrors.items && <p className="text-xs text-red-500">{bulkErrors.items}</p>}
 
             <div className="grid grid-cols-2 gap-3 pt-1">
-              <Input label="¿Quién realiza el ajuste? *"
-                value={bulkOperador} error={bulkErrors.operador}
-                onChange={e => setBulkOperador(e.target.value)}
-                placeholder="Tu nombre" />
+              <Select label="Operador *" value={bulkOperador} error={bulkErrors.operador}
+                onChange={e => setBulkOperador(e.target.value)}>
+                <option value="">Selecciona operador...</option>
+                {operadores.map(op => <option key={op.id} value={op.nombre}>{op.nombre}</option>)}
+              </Select>
               <Input label="Motivo (opcional)"
                 value={bulkMotivo}
                 onChange={e => setBulkMotivo(e.target.value)}

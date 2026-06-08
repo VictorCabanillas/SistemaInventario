@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { ArrowLeft, Plus, Minus, Edit2, Trash2, AlertTriangle, Clock, Package, ChevronDown, ChevronUp, ArrowRightLeft } from 'lucide-react'
-import { getArticulo, updateArticulo, deleteArticulo, createMovimiento, getMovimientos, getCategorias, getProyectos } from '../utils/api'
+import { getArticulo, updateArticulo, deleteArticulo, createMovimiento, getMovimientos, getCategorias, getProyectos, getSalas, getOperadores } from '../utils/api'
 import { Modal, Button, Input, Select, Toast, Spinner, Badge, DarkModeToggle, ConfirmDialog } from '../components/ui'
 import { useDarkMode } from '../hooks/useDarkMode'
 
@@ -11,6 +11,8 @@ export default function DetalleArticulo() {
   const [dark, toggleDark] = useDarkMode()
   const [articulo, setArticulo] = useState(null)
   const [categorias, setCategorias] = useState([])
+  const [salas, setSalas] = useState([])
+  const [operadores, setOperadores] = useState([])
   const [proyectos, setProyectos] = useState([])
   const [movimientos, setMovimientos] = useState([])
   const [loading, setLoading] = useState(true)
@@ -31,19 +33,24 @@ export default function DetalleArticulo() {
 
   async function cargar() {
     try {
-      const [art, cats, movs, proyects] = await Promise.all([
+      const [art, cats, movs, proyects, sls, ops] = await Promise.all([
         getArticulo(articuloId),
         getCategorias(),
         getMovimientos(articuloId),
-        getProyectos()
+        getProyectos(),
+        getSalas(),
+        getOperadores()
       ])
       setArticulo(art)
       setCategorias(cats)
       setMovimientos(movs)
       setProyectos(proyects)
+      setSalas(sls)
+      setOperadores(ops)
       setFormInfo({
         nombre: art.nombre,
         categoria_id: art.categoria_id || '',
+        sala_id: art.sala_id || '',
         unidad: art.unidad,
         ubicacion: art.ubicacion || '',
         stock_minimo: art.stock_minimo || '',
@@ -65,6 +72,7 @@ export default function DetalleArticulo() {
       const updated = await updateArticulo(articuloId, {
         nombre: formInfo.nombre,
         categoria_id: formInfo.categoria_id ? parseInt(formInfo.categoria_id) : null,
+        sala_id: formInfo.sala_id ? parseInt(formInfo.sala_id) : null,
         unidad: formInfo.unidad,
         ubicacion: formInfo.ubicacion || null,
         stock_minimo: formInfo.stock_minimo ? parseFloat(formInfo.stock_minimo) : null,
@@ -229,7 +237,8 @@ export default function DetalleArticulo() {
 
           <div className="space-y-3">
             {[
-              { label: 'Ubicación', value: articulo.ubicacion },
+              { label: 'Sala', value: articulo.sala_nombre },
+              { label: 'Armario / Balda', value: articulo.ubicacion },
               { label: 'Unidad de medida', value: articulo.unidad },
               { label: 'Stock mínimo', value: articulo.stock_minimo ? `${articulo.stock_minimo} ${articulo.unidad}` : null },
               { label: 'Notas', value: articulo.notas },
@@ -308,9 +317,16 @@ export default function DetalleArticulo() {
                 onChange={e => setFormInfo(f => ({ ...f, stock_minimo: e.target.value }))}
                 placeholder="Opcional" />
             </div>
-            <Input label="Ubicación" value={formInfo.ubicacion}
-              onChange={e => setFormInfo(f => ({ ...f, ubicacion: e.target.value }))}
-              placeholder="Estantería, caja..." />
+            <div className="grid grid-cols-2 gap-3">
+              <Select label="Sala" value={formInfo.sala_id}
+                onChange={e => setFormInfo(f => ({ ...f, sala_id: e.target.value }))}>
+                <option value="">Sin sala</option>
+                {salas.map(s => <option key={s.id} value={s.id}>{s.nombre}</option>)}
+              </Select>
+              <Input label="Armario / Balda" value={formInfo.ubicacion}
+                onChange={e => setFormInfo(f => ({ ...f, ubicacion: e.target.value }))}
+                placeholder="Ej: B/2" />
+            </div>
             <div className="space-y-1">
               <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">Notas</label>
               <textarea value={formInfo.notas} onChange={e => setFormInfo(f => ({ ...f, notas: e.target.value }))}
@@ -368,13 +384,21 @@ export default function DetalleArticulo() {
               </div>
             )}
 
-            <Input
-              label="¿Quién realiza el movimiento? *"
-              value={formStock.operador}
-              error={errorsStock.operador}
-              onChange={e => setFormStock(f => ({ ...f, operador: e.target.value }))}
-              placeholder="Tu nombre"
-            />
+            {operadores.length > 0 ? (
+              <Select label="Operador *" value={formStock.operador} error={errorsStock.operador}
+                onChange={e => setFormStock(f => ({ ...f, operador: e.target.value }))}>
+                <option value="">Selecciona operador...</option>
+                {operadores.map(op => <option key={op.id} value={op.nombre}>{op.nombre}</option>)}
+              </Select>
+            ) : (
+              <Input
+                label="¿Quién realiza el movimiento? *"
+                value={formStock.operador}
+                error={errorsStock.operador}
+                onChange={e => setFormStock(f => ({ ...f, operador: e.target.value }))}
+                placeholder="Tu nombre"
+              />
+            )}
 
             <Input
               label="Motivo (opcional)"

@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Plus, Package, Search, AlertTriangle, FolderOpen, MoreVertical, Edit2, Trash2, X, Download, Settings, Upload } from 'lucide-react'
-import { getProyectos, createProyecto, updateProyecto, deleteProyecto, buscar, exportarExcel, getCategorias, createCategoria, deleteCategoria, backupDB, restoreDB } from '../utils/api'
+import { getProyectos, createProyecto, updateProyecto, deleteProyecto, buscar, exportarExcel, getCategorias, createCategoria, deleteCategoria, getSalas, createSala, deleteSala, getOperadores, createOperador, deleteOperador, backupDB, restoreDB } from '../utils/api'
 import { Modal, Button, Input, Toast, Spinner, EmptyState, ColorPicker, IconPicker, ProyectoIcon, Badge, DarkModeToggle, ConfirmDialog } from '../components/ui'
 import { useDarkMode } from '../hooks/useDarkMode'
 
@@ -25,6 +25,10 @@ export default function Proyectos() {
   const [showSettings, setShowSettings] = useState(false)
   const [categorias, setCategorias] = useState([])
   const [nuevaCat, setNuevaCat] = useState('')
+  const [salas, setSalas] = useState([])
+  const [nuevaSala, setNuevaSala] = useState('')
+  const [operadores, setOperadores] = useState([])
+  const [nuevoOp, setNuevoOp] = useState('')
   const [loadingCats, setLoadingCats] = useState(false)
 
   useEffect(() => { cargar() }, [])
@@ -117,8 +121,12 @@ export default function Proyectos() {
   async function abrirSettings() {
     setShowSettings(true)
     setLoadingCats(true)
-    try { setCategorias(await getCategorias()) }
-    catch { showToast('Error al cargar categorías', 'error') }
+    try {
+      const [cats, sls, ops] = await Promise.all([getCategorias(), getSalas(), getOperadores()])
+      setCategorias(cats)
+      setSalas(sls)
+      setOperadores(ops)
+    } catch { showToast('Error al cargar configuración', 'error') }
     finally { setLoadingCats(false) }
   }
 
@@ -141,6 +149,54 @@ export default function Proyectos() {
         try {
           await deleteCategoria(cat.id)
           setCategorias(cs => cs.filter(c => c.id !== cat.id))
+        } catch (e) { showToast(e.message, 'error') }
+      }
+    })
+  }
+
+  async function handleAddSala() {
+    if (!nuevaSala.trim()) return
+    try {
+      const sala = await createSala({ nombre: nuevaSala.trim() })
+      setSalas(ss => [...ss, sala].sort((a, b) => a.nombre.localeCompare(b.nombre)))
+      setNuevaSala('')
+    } catch (e) { showToast(e.message, 'error') }
+  }
+
+  function handleDeleteSala(sala) {
+    setConfirmDlg({
+      title: `¿Eliminar "${sala.nombre}"?`,
+      message: 'Los artículos en esta sala quedarán sin sala asignada.',
+      confirmLabel: 'Eliminar',
+      onConfirm: async () => {
+        setConfirmDlg(null)
+        try {
+          await deleteSala(sala.id)
+          setSalas(ss => ss.filter(s => s.id !== sala.id))
+        } catch (e) { showToast(e.message, 'error') }
+      }
+    })
+  }
+
+  async function handleAddOperador() {
+    if (!nuevoOp.trim()) return
+    try {
+      const op = await createOperador({ nombre: nuevoOp.trim() })
+      setOperadores(os => [...os, op].sort((a, b) => a.nombre.localeCompare(b.nombre)))
+      setNuevoOp('')
+    } catch (e) { showToast(e.message, 'error') }
+  }
+
+  function handleDeleteOperador(op) {
+    setConfirmDlg({
+      title: `¿Eliminar "${op.nombre}"?`,
+      message: 'El nombre ya no aparecerá en el desplegable de operadores.',
+      confirmLabel: 'Eliminar',
+      onConfirm: async () => {
+        setConfirmDlg(null)
+        try {
+          await deleteOperador(op.id)
+          setOperadores(os => os.filter(o => o.id !== op.id))
         } catch (e) { showToast(e.message, 'error') }
       }
     })
@@ -241,7 +297,11 @@ export default function Proyectos() {
                       <p className={`font-semibold text-sm ${art.bajo_minimo ? 'text-red-600' : 'text-gray-800 dark:text-gray-100'}`}>
                         {art.cantidad} {art.unidad}
                       </p>
-                      {art.ubicacion && <p className="text-xs text-gray-400 dark:text-gray-500">{art.ubicacion}</p>}
+                      {(art.sala_nombre || art.ubicacion) && (
+                        <p className="text-xs text-gray-400 dark:text-gray-500">
+                          {[art.sala_nombre, art.ubicacion].filter(Boolean).join(' · ')}
+                        </p>
+                      )}
                     </div>
                   </div>
                 ))}
@@ -362,7 +422,7 @@ export default function Proyectos() {
                       onKeyDown={e => e.key === 'Enter' && handleAddCat()} />
                     <Button onClick={handleAddCat} disabled={!nuevaCat.trim()}>Añadir</Button>
                   </div>
-                  <div className="space-y-1 max-h-48 overflow-y-auto">
+                  <div className="space-y-1 max-h-36 overflow-y-auto">
                     {categorias.map(cat => (
                       <div key={cat.id} className="flex items-center justify-between px-3 py-2 rounded-xl bg-gray-50 dark:bg-gray-800 group">
                         <span className="text-sm text-gray-700 dark:text-gray-300">{cat.nombre}</span>
@@ -375,6 +435,58 @@ export default function Proyectos() {
                   </div>
                 </div>
               )}
+            </div>
+
+            <div className="border-t border-gray-100 dark:border-gray-800" />
+
+            {/* Salas */}
+            <div>
+              <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wide mb-3">Salas / Ubicaciones</h3>
+              <div className="space-y-2">
+                <div className="flex gap-2">
+                  <Input value={nuevaSala} onChange={e => setNuevaSala(e.target.value)}
+                    placeholder="Nueva sala..."
+                    onKeyDown={e => e.key === 'Enter' && handleAddSala()} />
+                  <Button onClick={handleAddSala} disabled={!nuevaSala.trim()}>Añadir</Button>
+                </div>
+                <div className="space-y-1 max-h-36 overflow-y-auto">
+                  {salas.map(sala => (
+                    <div key={sala.id} className="flex items-center justify-between px-3 py-2 rounded-xl bg-gray-50 dark:bg-gray-800 group">
+                      <span className="text-sm text-gray-700 dark:text-gray-300">{sala.nombre}</span>
+                      <button onClick={() => handleDeleteSala(sala)}
+                        className="opacity-0 group-hover:opacity-100 p-1 rounded-lg hover:bg-red-100 dark:hover:bg-red-900 transition-all">
+                        <X size={13} className="text-red-500" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            <div className="border-t border-gray-100 dark:border-gray-800" />
+
+            {/* Operadores */}
+            <div>
+              <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wide mb-3">Operadores</h3>
+              <div className="space-y-2">
+                <div className="flex gap-2">
+                  <Input value={nuevoOp} onChange={e => setNuevoOp(e.target.value)}
+                    placeholder="Nombre del operador..."
+                    onKeyDown={e => e.key === 'Enter' && handleAddOperador()} />
+                  <Button onClick={handleAddOperador} disabled={!nuevoOp.trim()}>Añadir</Button>
+                </div>
+                <div className="space-y-1 max-h-36 overflow-y-auto">
+                  {operadores.map(op => (
+                    <div key={op.id} className="flex items-center justify-between px-3 py-2 rounded-xl bg-gray-50 dark:bg-gray-800 group">
+                      <span className="text-sm text-gray-700 dark:text-gray-300">{op.nombre}</span>
+                      <button onClick={() => handleDeleteOperador(op)}
+                        className="opacity-0 group-hover:opacity-100 p-1 rounded-lg hover:bg-red-100 dark:hover:bg-red-900 transition-all">
+                        <X size={13} className="text-red-500" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
             </div>
           </div>
         </Modal>

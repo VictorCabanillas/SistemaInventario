@@ -13,6 +13,8 @@ ICONOS_DIR = os.path.join(os.path.dirname(__file__), "iconos")
 from database import get_db, init_db
 from schemas import (
     Categoria, CategoriaCreate,
+    Sala, SalaCreate,
+    Operador, OperadorCreate,
     Proyecto, ProyectoCreate, ProyectoUpdate,
     Articulo, ArticuloCreate, ArticuloUpdate,
     Movimiento, MovimientoCreate,
@@ -100,6 +102,70 @@ def delete_categoria(id: int):
 
 
 # ─────────────────────────────────────────
+# SALAS
+# ─────────────────────────────────────────
+
+@app.get("/api/salas", response_model=List[Sala])
+def get_salas():
+    db = get_db()
+    rows = db.execute("SELECT id, nombre FROM salas ORDER BY nombre").fetchall()
+    db.close()
+    return [dict(r) for r in rows]
+
+@app.post("/api/salas", response_model=Sala, status_code=201)
+def create_sala(data: SalaCreate):
+    db = get_db()
+    try:
+        cur = db.execute("INSERT INTO salas (nombre) VALUES (?)", (data.nombre,))
+        db.commit()
+        row = db.execute("SELECT id, nombre FROM salas WHERE id=?", (cur.lastrowid,)).fetchone()
+        return dict(row)
+    except Exception as e:
+        raise HTTPException(400, f"La sala ya existe: {e}")
+    finally:
+        db.close()
+
+@app.delete("/api/salas/{id}", status_code=204)
+def delete_sala(id: int):
+    db = get_db()
+    db.execute("DELETE FROM salas WHERE id=?", (id,))
+    db.commit()
+    db.close()
+
+
+# ─────────────────────────────────────────
+# OPERADORES
+# ─────────────────────────────────────────
+
+@app.get("/api/operadores", response_model=List[Operador])
+def get_operadores():
+    db = get_db()
+    rows = db.execute("SELECT id, nombre FROM operadores ORDER BY nombre").fetchall()
+    db.close()
+    return [dict(r) for r in rows]
+
+@app.post("/api/operadores", response_model=Operador, status_code=201)
+def create_operador(data: OperadorCreate):
+    db = get_db()
+    try:
+        cur = db.execute("INSERT INTO operadores (nombre) VALUES (?)", (data.nombre,))
+        db.commit()
+        row = db.execute("SELECT id, nombre FROM operadores WHERE id=?", (cur.lastrowid,)).fetchone()
+        return dict(row)
+    except Exception as e:
+        raise HTTPException(400, f"El operador ya existe: {e}")
+    finally:
+        db.close()
+
+@app.delete("/api/operadores/{id}", status_code=204)
+def delete_operador(id: int):
+    db = get_db()
+    db.execute("DELETE FROM operadores WHERE id=?", (id,))
+    db.commit()
+    db.close()
+
+
+# ─────────────────────────────────────────
 # PROYECTOS
 # ─────────────────────────────────────────
 
@@ -167,30 +233,25 @@ def delete_proyecto(id: int):
 # ARTÍCULOS
 # ─────────────────────────────────────────
 
+ARTICULO_SELECT = """
+    SELECT a.*, c.nombre as categoria_nombre, s.nombre as sala_nombre,
+           CASE WHEN a.stock_minimo IS NOT NULL AND a.cantidad < a.stock_minimo THEN 1 ELSE 0 END as bajo_minimo
+    FROM articulos a
+    LEFT JOIN categorias c ON c.id = a.categoria_id
+    LEFT JOIN salas s ON s.id = a.sala_id
+"""
+
 @app.get("/api/proyectos/{proyecto_id}/articulos", response_model=List[Articulo])
 def get_articulos(proyecto_id: int):
     db = get_db()
-    rows = db.execute("""
-        SELECT a.*, c.nombre as categoria_nombre,
-               CASE WHEN a.stock_minimo IS NOT NULL AND a.cantidad < a.stock_minimo THEN 1 ELSE 0 END as bajo_minimo
-        FROM articulos a
-        LEFT JOIN categorias c ON c.id = a.categoria_id
-        WHERE a.proyecto_id = ?
-        ORDER BY a.nombre
-    """, (proyecto_id,)).fetchall()
+    rows = db.execute(ARTICULO_SELECT + "WHERE a.proyecto_id = ? ORDER BY a.nombre", (proyecto_id,)).fetchall()
     db.close()
     return [dict(r) for r in rows]
 
 @app.get("/api/articulos/{id}", response_model=Articulo)
 def get_articulo(id: int):
     db = get_db()
-    row = db.execute("""
-        SELECT a.*, c.nombre as categoria_nombre,
-               CASE WHEN a.stock_minimo IS NOT NULL AND a.cantidad < a.stock_minimo THEN 1 ELSE 0 END as bajo_minimo
-        FROM articulos a
-        LEFT JOIN categorias c ON c.id = a.categoria_id
-        WHERE a.id = ?
-    """, (id,)).fetchone()
+    row = db.execute(ARTICULO_SELECT + "WHERE a.id = ?", (id,)).fetchone()
     db.close()
     if not row:
         raise HTTPException(404, "Artículo no encontrado")
@@ -200,18 +261,12 @@ def get_articulo(id: int):
 def create_articulo(data: ArticuloCreate):
     db = get_db()
     cur = db.execute("""
-        INSERT INTO articulos (proyecto_id, categoria_id, nombre, cantidad, unidad, ubicacion, stock_minimo, notas)
-        VALUES (?,?,?,?,?,?,?,?)
-    """, (data.proyecto_id, data.categoria_id, data.nombre, data.cantidad,
+        INSERT INTO articulos (proyecto_id, categoria_id, sala_id, nombre, cantidad, unidad, ubicacion, stock_minimo, notas)
+        VALUES (?,?,?,?,?,?,?,?,?)
+    """, (data.proyecto_id, data.categoria_id, data.sala_id, data.nombre, data.cantidad,
           data.unidad, data.ubicacion, data.stock_minimo, data.notas))
     db.commit()
-    row = db.execute("""
-        SELECT a.*, c.nombre as categoria_nombre,
-               CASE WHEN a.stock_minimo IS NOT NULL AND a.cantidad < a.stock_minimo THEN 1 ELSE 0 END as bajo_minimo
-        FROM articulos a
-        LEFT JOIN categorias c ON c.id = a.categoria_id
-        WHERE a.id = ?
-    """, (cur.lastrowid,)).fetchone()
+    row = db.execute(ARTICULO_SELECT + "WHERE a.id = ?", (cur.lastrowid,)).fetchone()
     db.close()
     return dict(row)
 
@@ -224,13 +279,7 @@ def update_articulo(id: int, data: ArticuloUpdate):
         sets += ", updated_at=datetime('now')"
         db.execute(f"UPDATE articulos SET {sets} WHERE id=?", (*fields.values(), id))
         db.commit()
-    row = db.execute("""
-        SELECT a.*, c.nombre as categoria_nombre,
-               CASE WHEN a.stock_minimo IS NOT NULL AND a.cantidad < a.stock_minimo THEN 1 ELSE 0 END as bajo_minimo
-        FROM articulos a
-        LEFT JOIN categorias c ON c.id = a.categoria_id
-        WHERE a.id = ?
-    """, (id,)).fetchone()
+    row = db.execute(ARTICULO_SELECT + "WHERE a.id = ?", (id,)).fetchone()
     db.close()
     if not row:
         raise HTTPException(404, "Artículo no encontrado")
@@ -301,13 +350,7 @@ def create_movimiento(data: MovimientoCreate):
 
     db.commit()
 
-    row = db.execute("""
-        SELECT a.*, c.nombre as categoria_nombre,
-               CASE WHEN a.stock_minimo IS NOT NULL AND a.cantidad < a.stock_minimo THEN 1 ELSE 0 END as bajo_minimo
-        FROM articulos a
-        LEFT JOIN categorias c ON c.id = a.categoria_id
-        WHERE a.id = ?
-    """, (data.articulo_id,)).fetchone()
+    row = db.execute(ARTICULO_SELECT + "WHERE a.id = ?", (data.articulo_id,)).fetchone()
     db.close()
     return dict(row)
 
@@ -323,14 +366,15 @@ def buscar(q: str = Query(..., min_length=1)):
         SELECT a.id, a.nombre, a.cantidad, a.unidad, a.ubicacion,
                CASE WHEN a.stock_minimo IS NOT NULL AND a.cantidad < a.stock_minimo THEN 1 ELSE 0 END as bajo_minimo,
                p.id as proyecto_id, p.nombre as proyecto_nombre, p.color as proyecto_color,
-               c.nombre as categoria_nombre
+               c.nombre as categoria_nombre, s.nombre as sala_nombre
         FROM articulos a
         JOIN proyectos p ON p.id = a.proyecto_id
         LEFT JOIN categorias c ON c.id = a.categoria_id
-        WHERE a.nombre LIKE ? OR a.ubicacion LIKE ? OR c.nombre LIKE ?
+        LEFT JOIN salas s ON s.id = a.sala_id
+        WHERE a.nombre LIKE ? OR a.ubicacion LIKE ? OR c.nombre LIKE ? OR s.nombre LIKE ?
         ORDER BY a.nombre
         LIMIT 50
-    """, (f"%{q}%", f"%{q}%", f"%{q}%")).fetchall()
+    """, (f"%{q}%", f"%{q}%", f"%{q}%", f"%{q}%")).fetchall()
     db.close()
     return [dict(r) for r in rows]
 
@@ -358,11 +402,7 @@ def create_movimientos_bulk(movimientos: List[MovimientoCreate]):
             db.execute("UPDATE articulos SET cantidad=?, updated_at=datetime('now') WHERE id=?", (nueva, data.articulo_id))
         db.commit()
         for data in movimientos:
-            row = db.execute("""
-                SELECT a.*, c.nombre as categoria_nombre,
-                       CASE WHEN a.stock_minimo IS NOT NULL AND a.cantidad < a.stock_minimo THEN 1 ELSE 0 END as bajo_minimo
-                FROM articulos a LEFT JOIN categorias c ON c.id = a.categoria_id WHERE a.id=?
-            """, (data.articulo_id,)).fetchone()
+            row = db.execute(ARTICULO_SELECT + "WHERE a.id=?", (data.articulo_id,)).fetchone()
             if row:
                 resultados.append(dict(row))
     finally:
