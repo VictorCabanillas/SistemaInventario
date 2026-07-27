@@ -4,7 +4,21 @@ import os
 DB_PATH = os.path.join(os.path.dirname(__file__), "inventario.db")
 
 
+def _ensure_db_file():
+    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+    if os.path.isdir(DB_PATH):
+        if os.listdir(DB_PATH):
+            raise RuntimeError(
+                f"La ruta de la base de datos {DB_PATH} es un directorio con contenido. "
+                "Debe apuntar a un archivo SQLite."
+            )
+        os.rmdir(DB_PATH)
+    if not os.path.exists(DB_PATH):
+        open(DB_PATH, "a").close()
+
+
 def get_db():
+    _ensure_db_file()
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")

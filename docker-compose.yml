@@ -1,11 +1,12 @@
 version: '3.8'
 services:
   backend:
+    container_name: sistemainventario-backend
     build:
       context: .
       dockerfile: backend/Dockerfile
     volumes:
-      - ./backend/inventario.db:/app/backend/inventario.db
+      - ./backend/inventario.db:/app/backend/inventario.db:rw
       - ./backend/iconos:/app/backend/iconos
       - ./backups:/backups
     ports:
@@ -13,6 +14,7 @@ services:
     restart: unless-stopped
 
   frontend:
+    container_name: sistemainventario-frontend
     build:
       context: .
       dockerfile: frontend/Dockerfile

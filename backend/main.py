@@ -10,7 +10,7 @@ import tempfile
 
 ICONOS_DIR = os.path.join(os.path.dirname(__file__), "iconos")
 
-from database import get_db, init_db
+from database import get_db, init_db, DB_PATH
 from schemas import (
     Categoria, CategoriaCreate,
     Sala, SalaCreate,
