@@ -90,9 +90,9 @@ El botón de exportar está disponible en la vista de artículos de cada proyect
 
 ## Base de datos
 
-SQLite en `backend/inventario.db`. Para hacer una copia de seguridad:
+SQLite en `data/inventario.db`. Para hacer una copia de seguridad:
 ```bash
-cp ~/inventario/backend/inventario.db ~/inventario_backup_$(date +%Y%m%d).db
+cp ~/inventario/data/inventario.db ~/inventario_backup_$(date +%Y%m%d).db
 ```
 
 ## Despliegue (Docker Compose y backups)
@@ -114,7 +114,7 @@ docker compose up -d
 ```
 
 Volúmenes relevantes (docker-compose.yml)
-- `./backend/inventario.db:/app/backend/inventario.db` — garantiza que la base de datos SQLite se persiste en el host.
+- `./data/inventario.db:/data/inventario.db` — garantiza que la base de datos SQLite se persiste en el host.
 - `./backups:/backups` — directorio de backups (opcionalmente sustituible por un montaje a un NAS sobre el host).
 
 Backups: dónde ejecutarlos y cómo almacenar en NAS

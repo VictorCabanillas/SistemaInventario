@@ -3,7 +3,7 @@ set -euo pipefail
 
 # Script de backup con rotación y soporte para destino en NAS
 REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-DB_PATH="$REPO_DIR/backend/inventario.db"
+DB_PATH="$REPO_DIR/data/inventario.db"
 DEFAULT_BACKUP_DIR="$REPO_DIR/backups"
 
 # Allow overriding backup dir via env var BACKUP_DIR
@@ -29,7 +29,7 @@ fi
 
 STAMP=$(date +%Y%m%d_%H%M%S)
 DEST="$BACKUP_DIR/inventario_$STAMP.db"
-cp "$DB_PATH" "$DEST"
+sqlite3 "$DB_PATH" ".backup '$DEST'"
 echo "Backup creado: $DEST"
 
 # Eliminar backups antiguos dejando solo los más recientes (KEEP)

@@ -14,7 +14,7 @@ echo "========================================"
 echo ""
 echo ">> Actualizando paquetes del sistema..."
 sudo apt-get update -q
-sudo apt-get install -y python3 python3-pip python3-venv nodejs npm chromium-browser
+sudo apt-get install -y python3 python3-pip python3-venv nodejs npm chromium-browser sqlite3
 
 # 2. Estructura del proyecto
 echo ""
