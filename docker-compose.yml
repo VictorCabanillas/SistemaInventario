@@ -6,7 +6,7 @@ services:
       context: .
       dockerfile: backend/Dockerfile
     volumes:
-      - ./backend/inventario.db:/app/backend/inventario.db:rw
+      - ./data:/data
       - ./backend/iconos:/app/backend/iconos
       - ./backups:/backups
     ports:

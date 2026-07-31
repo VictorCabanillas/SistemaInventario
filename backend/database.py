@@ -1,18 +1,18 @@
 import sqlite3
 import os
 
-DB_PATH = os.path.join(os.path.dirname(__file__), "inventario.db")
+DB_DIR = "/data"
+DB_PATH = os.path.join(DB_DIR, "inventario.db")
 
 
 def _ensure_db_file():
-    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+    os.makedirs(DB_DIR, exist_ok=True)
+
     if os.path.isdir(DB_PATH):
-        if os.listdir(DB_PATH):
-            raise RuntimeError(
-                f"La ruta de la base de datos {DB_PATH} es un directorio con contenido. "
-                "Debe apuntar a un archivo SQLite."
-            )
-        os.rmdir(DB_PATH)
+        raise RuntimeError(
+            f"{DB_PATH} es un directorio; debería ser un archivo SQLite."
+        )
+
     if not os.path.exists(DB_PATH):
         open(DB_PATH, "a").close()
 

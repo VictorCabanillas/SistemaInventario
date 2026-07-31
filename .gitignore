@@ -7,9 +7,8 @@ __pycache__/
 .Python
 
 # Base de datos (generada en runtime)
-backend/*.db
-backend/*.db-shm
-backend/*.db-wal
+data/*
+!data/.gitkeep
 
 # Frontend
 frontend/node_modules/
