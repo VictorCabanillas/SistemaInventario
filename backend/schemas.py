@@ -48,41 +48,57 @@ class Proyecto(BaseModel):
     descripcion: Optional[str]
     color: str
     icono: Optional[str] = "Package"
+    es_almacen: bool = False
     created_at: str
     total_articulos: Optional[int] = 0
     articulos_bajo_minimo: Optional[int] = 0
 
 
 # --- Artículos ---
+# El "artículo" es el catálogo global (nombre+marca+referencia únicos).
+# Las existencias reales viven en `stock`, una fila por (articulo, proyecto).
+# Los endpoints de listado devuelven ambas cosas fusionadas: catálogo +
+# cantidad/ubicación/stock_mínimo ya resueltos para un proyecto concreto.
+
 class ArticuloCreate(BaseModel):
-    proyecto_id: int
-    categoria_id: Optional[int] = None
-    sala_id: Optional[int] = None
     nombre: str
+    marca: Optional[str] = ""
+    referencia: Optional[str] = ""
+    categoria_id: Optional[int] = None
+    proyecto_id: Optional[int] = None  # si no se indica, va al Almacén general
     cantidad: float = 0
     unidad: Optional[str] = "ud"
+    sala_id: Optional[int] = None
     ubicacion: Optional[str] = None
     stock_minimo: Optional[float] = None
     notas: Optional[str] = None
 
 class ArticuloUpdate(BaseModel):
-    proyecto_id: Optional[int] = None
-    categoria_id: Optional[int] = None
-    sala_id: Optional[int] = None
+    # Campos de catálogo (compartidos por todos los proyectos donde exista stock)
     nombre: Optional[str] = None
+    marca: Optional[str] = None
+    referencia: Optional[str] = None
+    categoria_id: Optional[int] = None
     unidad: Optional[str] = None
+    notas: Optional[str] = None
+    # Overrides de este proyecto concreto (fila de stock)
+    sala_id: Optional[int] = None
     ubicacion: Optional[str] = None
     stock_minimo: Optional[float] = None
-    notas: Optional[str] = None
 
 class Articulo(BaseModel):
-    id: int
+    id: int  # id del artículo en el catálogo
+    stock_id: int  # id de la fila de stock (existencias en este proyecto)
     proyecto_id: int
+    proyecto_nombre: Optional[str] = None
+    proyecto_color: Optional[str] = None
+    nombre: str
+    marca: str
+    referencia: str
     categoria_id: Optional[int]
     categoria_nombre: Optional[str]
     sala_id: Optional[int]
     sala_nombre: Optional[str]
-    nombre: str
     cantidad: float
     unidad: str
     ubicacion: Optional[str]
@@ -95,22 +111,30 @@ class Articulo(BaseModel):
 
 # --- Movimientos ---
 class MovimientoCreate(BaseModel):
-    articulo_id: int
-    tipo: str  # 'entrada' | 'salida'
+    tipo: str  # 'entrada' | 'salida' | 'transferencia'
     cantidad: float = Field(gt=0)
     motivo: Optional[str] = None
     operador: str
+    stock_id: Optional[int] = None  # requerido para entrada/salida
+    articulo_id: Optional[int] = None  # requerido para transferencia
+    proyecto_origen_id: Optional[int] = None  # requerido para transferencia
+    proyecto_destino_id: Optional[int] = None  # requerido para transferencia
 
 class Movimiento(BaseModel):
     id: int
     articulo_id: int
     articulo_nombre: Optional[str]
-    proyecto_nombre: Optional[str]
     tipo: str
     cantidad: float
     motivo: Optional[str]
     operador: str
     fecha: str
+    proyecto_id: Optional[int] = None
+    proyecto_nombre: Optional[str] = None
+    proyecto_origen_id: Optional[int] = None
+    proyecto_origen_nombre: Optional[str] = None
+    proyecto_destino_id: Optional[int] = None
+    proyecto_destino_nombre: Optional[str] = None
 
 
 # --- Búsqueda global ---

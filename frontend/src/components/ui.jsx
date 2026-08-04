@@ -114,7 +114,15 @@ export function Button({ variant = 'primary', size = 'md', children, className =
 }
 
 // ── Badge ────────────────────────────────────────────────────
-export function Badge({ children, color = 'gray' }) {
+export function Badge({ children, color = 'gray', hex }) {
+  if (hex) {
+    return (
+      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium"
+        style={{ backgroundColor: hex + '20', color: hex }}>
+        {children}
+      </span>
+    )
+  }
   const colors = {
     gray: 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300',
     blue: 'bg-blue-100 text-blue-700 dark:bg-blue-900/50 dark:text-blue-300',

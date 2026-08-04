@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { ArrowLeft, Plus, Minus, Edit2, Trash2, AlertTriangle, Clock, Package, ChevronDown, ChevronUp, ArrowRightLeft } from 'lucide-react'
-import { getArticulo, updateArticulo, deleteArticulo, createMovimiento, getMovimientos, getCategorias, getProyectos, getSalas, getOperadores } from '../utils/api'
+import { getArticulo, getStockArticulo, updateArticulo, deleteArticulo, createMovimiento, createTransferencia, getMovimientos, getCategorias, getProyectos, getSalas, getOperadores } from '../utils/api'
 import { Modal, Button, Input, Select, Toast, Spinner, Badge, DarkModeToggle, ConfirmDialog } from '../components/ui'
 import { useDarkMode } from '../hooks/useDarkMode'
 
@@ -14,6 +14,7 @@ export default function DetalleArticulo() {
   const [salas, setSalas] = useState([])
   const [operadores, setOperadores] = useState([])
   const [proyectos, setProyectos] = useState([])
+  const [stockOtrosProyectos, setStockOtrosProyectos] = useState([])
   const [movimientos, setMovimientos] = useState([])
   const [loading, setLoading] = useState(true)
   const [showHistorial, setShowHistorial] = useState(false)
@@ -27,19 +28,21 @@ export default function DetalleArticulo() {
   const [formStock, setFormStock] = useState({ tipo: 'entrada', cantidad: '', operador: '', motivo: '' })
   const [errorsStock, setErrorsStock] = useState({})
 
-  const [proyectoDestino, setProyectoDestino] = useState('')
+  const [formMover, setFormMover] = useState({ proyecto_destino: '', cantidad: '', operador: '', motivo: '' })
+  const [errorsMover, setErrorsMover] = useState({})
 
-  useEffect(() => { cargar() }, [articuloId])
+  useEffect(() => { cargar() }, [proyectoId, articuloId])
 
   async function cargar() {
     try {
-      const [art, cats, movs, proyects, sls, ops] = await Promise.all([
-        getArticulo(articuloId),
+      const [art, cats, movs, proyects, sls, ops, stockOtros] = await Promise.all([
+        getArticulo(proyectoId, articuloId),
         getCategorias(),
         getMovimientos(articuloId),
         getProyectos(),
         getSalas(),
-        getOperadores()
+        getOperadores(),
+        getStockArticulo(articuloId),
       ])
       setArticulo(art)
       setCategorias(cats)
@@ -47,8 +50,11 @@ export default function DetalleArticulo() {
       setProyectos(proyects)
       setSalas(sls)
       setOperadores(ops)
+      setStockOtrosProyectos(stockOtros.filter(s => s.proyecto_id !== parseInt(proyectoId)))
       setFormInfo({
         nombre: art.nombre,
+        marca: art.marca || '',
+        referencia: art.referencia || '',
         categoria_id: art.categoria_id || '',
         sala_id: art.sala_id || '',
         unidad: art.unidad,
@@ -69,8 +75,10 @@ export default function DetalleArticulo() {
     if (Object.keys(errs).length) { setErrorsInfo(errs); return }
 
     try {
-      const updated = await updateArticulo(articuloId, {
+      const updated = await updateArticulo(articuloId, proyectoId, {
         nombre: formInfo.nombre,
+        marca: formInfo.marca,
+        referencia: formInfo.referencia,
         categoria_id: formInfo.categoria_id ? parseInt(formInfo.categoria_id) : null,
         sala_id: formInfo.sala_id ? parseInt(formInfo.sala_id) : null,
         unidad: formInfo.unidad,
@@ -95,7 +103,7 @@ export default function DetalleArticulo() {
 
     try {
       const updated = await createMovimiento({
-        articulo_id: parseInt(articuloId),
+        stock_id: articulo.stock_id,
         tipo: formStock.tipo,
         cantidad: parseFloat(formStock.cantidad),
         operador: formStock.operador,
@@ -113,13 +121,15 @@ export default function DetalleArticulo() {
 
   function handleEliminar() {
     setConfirmDlg({
-      title: '¿Eliminar artículo?',
-      message: `Se eliminará "${articulo.nombre}" y todo su historial. Esta acción no se puede deshacer.`,
+      title: '¿Eliminar artículo de este proyecto?',
+      message: stockOtrosProyectos.length > 0
+        ? `Se eliminará "${articulo.nombre}" y su historial de este proyecto. El artículo sigue existiendo en otros proyectos.`
+        : `Se eliminará "${articulo.nombre}" y todo su historial. Esta acción no se puede deshacer.`,
       confirmLabel: 'Eliminar',
       onConfirm: async () => {
         setConfirmDlg(null)
         try {
-          await deleteArticulo(articuloId)
+          await deleteArticulo(proyectoId, articuloId)
           showToast('Artículo eliminado')
           setTimeout(() => navigate(`/proyectos/${proyectoId}`), 500)
         } catch (e) {
@@ -129,12 +139,30 @@ export default function DetalleArticulo() {
     })
   }
 
-  async function handleMover() {
-    if (!proyectoDestino) return
+  async function handleTransferir() {
+    const errs = {}
+    if (!formMover.proyecto_destino) errs.proyecto_destino = 'Selecciona un proyecto'
+    const cantidad = parseFloat(formMover.cantidad)
+    if (!formMover.cantidad || isNaN(cantidad) || cantidad <= 0) errs.cantidad = 'Introduce una cantidad válida'
+    else if (cantidad > articulo.cantidad) errs.cantidad = `Solo hay ${articulo.cantidad} ${articulo.unidad} disponibles`
+    if (!formMover.operador.trim()) errs.operador = 'El nombre es obligatorio'
+    if (Object.keys(errs).length) { setErrorsMover(errs); return }
+
     try {
-      await updateArticulo(articuloId, { proyecto_id: parseInt(proyectoDestino) })
-      showToast('Artículo movido')
-      setTimeout(() => navigate(`/proyectos/${proyectoDestino}`), 500)
+      const updated = await createTransferencia({
+        articulo_id: articulo.id,
+        proyecto_origen_id: parseInt(proyectoId),
+        proyecto_destino_id: parseInt(formMover.proyecto_destino),
+        cantidad,
+        operador: formMover.operador,
+        motivo: formMover.motivo || null,
+      })
+      setArticulo(updated)
+      const [movs, stockOtros] = await Promise.all([getMovimientos(articuloId), getStockArticulo(articuloId)])
+      setMovimientos(movs)
+      setStockOtrosProyectos(stockOtros.filter(s => s.proyecto_id !== parseInt(proyectoId)))
+      setModal(null)
+      showToast('Unidades transferidas')
     } catch (e) {
       showToast(e.message, 'error')
     }
@@ -147,7 +175,8 @@ export default function DetalleArticulo() {
   }
 
   function abrirMover() {
-    setProyectoDestino('')
+    setFormMover({ proyecto_destino: '', cantidad: String(articulo.cantidad), operador: '', motivo: '' })
+    setErrorsMover({})
     setModal('mover')
   }
 
@@ -176,13 +205,15 @@ export default function DetalleArticulo() {
           </button>
           <div className="flex-1 min-w-0">
             <h1 className="font-bold text-gray-900 dark:text-gray-50 truncate">{articulo.nombre}</h1>
-            <p className="text-xs text-gray-400 dark:text-gray-500">{articulo.categoria_nombre || 'Sin categoría'}</p>
+            <p className="text-xs text-gray-400 dark:text-gray-500 truncate">
+              {[articulo.marca, articulo.referencia].filter(Boolean).join(' · ') || articulo.categoria_nombre || 'Sin categoría'}
+            </p>
           </div>
           <DarkModeToggle dark={dark} onToggle={toggleDark} />
           {otrosProyectos.length > 0 && (
             <button onClick={abrirMover}
               className="p-2 rounded-xl hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
-              title="Mover a otro proyecto">
+              title="Transferir a otro proyecto">
               <ArrowRightLeft size={16} className="text-gray-400" />
             </button>
           )}
@@ -237,6 +268,9 @@ export default function DetalleArticulo() {
 
           <div className="space-y-3">
             {[
+              { label: 'Marca', value: articulo.marca },
+              { label: 'Referencia', value: articulo.referencia },
+              { label: 'Categoría', value: articulo.categoria_nombre },
               { label: 'Sala', value: articulo.sala_nombre },
               { label: 'Armario / Balda', value: articulo.ubicacion },
               { label: 'Unidad de medida', value: articulo.unidad },
@@ -250,6 +284,23 @@ export default function DetalleArticulo() {
             ) : null)}
           </div>
         </div>
+
+        {/* También en otros proyectos */}
+        {stockOtrosProyectos.length > 0 && (
+          <div className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-700 p-5">
+            <h2 className="font-semibold text-gray-800 dark:text-gray-100 mb-3">También en otros proyectos</h2>
+            <div className="space-y-2">
+              {stockOtrosProyectos.map(s => (
+                <div key={s.stock_id}
+                  onClick={() => navigate(`/proyectos/${s.proyecto_id}/articulos/${articulo.id}`)}
+                  className="flex items-center justify-between px-3 py-2 rounded-xl bg-gray-50 dark:bg-gray-800 cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors">
+                  <span className="text-sm text-gray-700 dark:text-gray-300">{s.proyecto_nombre}</span>
+                  <span className="text-sm font-semibold text-gray-800 dark:text-gray-100">{s.cantidad} {s.unidad}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* Historial de movimientos */}
         <div className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-700 overflow-hidden">
@@ -271,26 +322,44 @@ export default function DetalleArticulo() {
                 <p className="text-sm text-gray-400 dark:text-gray-500 text-center py-6">Sin movimientos registrados</p>
               ) : (
                 <div className="divide-y divide-gray-50 dark:divide-gray-800">
-                  {movimientos.map(mov => (
-                    <div key={mov.id} className="flex items-center gap-3 px-5 py-3">
-                      <div className={`w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0
-                        ${mov.tipo === 'entrada' ? 'bg-green-100 dark:bg-green-900' : 'bg-red-100 dark:bg-red-900'}`}>
-                        {mov.tipo === 'entrada'
-                          ? <Plus size={13} className="text-green-600 dark:text-green-400" />
-                          : <Minus size={13} className="text-red-600 dark:text-red-400" />}
+                  {movimientos.map(mov => {
+                    const esTransferencia = mov.tipo === 'transferencia'
+                    const saliente = esTransferencia && mov.proyecto_origen_id === parseInt(proyectoId)
+                    const positivo = esTransferencia ? !saliente : mov.tipo === 'entrada'
+                    const otroProyectoNombre = esTransferencia
+                      ? (saliente ? mov.proyecto_destino_nombre : mov.proyecto_origen_nombre)
+                      : null
+                    return (
+                      <div key={mov.id} className="flex items-center gap-3 px-5 py-3">
+                        <div className={`w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0
+                          ${esTransferencia ? 'bg-blue-100 dark:bg-blue-900' : positivo ? 'bg-green-100 dark:bg-green-900' : 'bg-red-100 dark:bg-red-900'}`}>
+                          {esTransferencia
+                            ? <ArrowRightLeft size={13} className="text-blue-600 dark:text-blue-400" />
+                            : positivo
+                              ? <Plus size={13} className="text-green-600 dark:text-green-400" />
+                              : <Minus size={13} className="text-red-600 dark:text-red-400" />}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                            {mov.operador}
+                            {esTransferencia && (
+                              <span className="text-gray-400 dark:text-gray-500 font-normal">
+                                {' '}{saliente ? '→' : '←'} {otroProyectoNombre}
+                              </span>
+                            )}
+                          </p>
+                          <p className="text-xs text-gray-400 dark:text-gray-500">
+                            {new Date(mov.fecha).toLocaleString('es-ES', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                            {mov.motivo && ` · ${mov.motivo}`}
+                            {!esTransferencia && mov.proyecto_id !== parseInt(proyectoId) && ` · ${mov.proyecto_nombre}`}
+                          </p>
+                        </div>
+                        <span className={`font-bold text-sm flex-shrink-0 ${esTransferencia ? 'text-blue-600 dark:text-blue-400' : positivo ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
+                          {positivo ? '+' : '-'}{mov.cantidad}
+                        </span>
                       </div>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium text-gray-700 dark:text-gray-300">{mov.operador}</p>
-                        <p className="text-xs text-gray-400 dark:text-gray-500">
-                          {new Date(mov.fecha).toLocaleString('es-ES', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
-                          {mov.motivo && ` · ${mov.motivo}`}
-                        </p>
-                      </div>
-                      <span className={`font-bold text-sm flex-shrink-0 ${mov.tipo === 'entrada' ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
-                        {mov.tipo === 'entrada' ? '+' : '-'}{mov.cantidad}
-                      </span>
-                    </div>
-                  ))}
+                    )
+                  })}
                 </div>
               )}
             </div>
@@ -304,6 +373,17 @@ export default function DetalleArticulo() {
           <div className="space-y-4">
             <Input label="Nombre *" value={formInfo.nombre} error={errorsInfo.nombre}
               onChange={e => setFormInfo(f => ({ ...f, nombre: e.target.value }))} />
+            <div className="grid grid-cols-2 gap-3">
+              <Input label="Marca" value={formInfo.marca}
+                onChange={e => setFormInfo(f => ({ ...f, marca: e.target.value }))} />
+              <Input label="Referencia" value={formInfo.referencia}
+                onChange={e => setFormInfo(f => ({ ...f, referencia: e.target.value }))} />
+            </div>
+            {stockOtrosProyectos.length > 0 && (
+              <p className="text-xs text-gray-400 dark:text-gray-500 -mt-2">
+                Nombre, marca, referencia y categoría son compartidos: al guardar se actualizarán también en los demás proyectos donde existe este artículo.
+              </p>
+            )}
             <Select label="Categoría" value={formInfo.categoria_id}
               onChange={e => setFormInfo(f => ({ ...f, categoria_id: e.target.value }))}>
               <option value="">Sin categoría</option>
@@ -419,21 +499,51 @@ export default function DetalleArticulo() {
         </Modal>
       )}
 
-      {/* Modal mover a otro proyecto */}
+      {/* Modal transferir a otro proyecto */}
       {modal === 'mover' && (
-        <Modal title="Mover a otro proyecto" onClose={() => setModal(null)} size="sm">
+        <Modal title="Transferir a otro proyecto" onClose={() => setModal(null)} size="sm">
           <div className="space-y-4">
             <p className="text-sm text-gray-500 dark:text-gray-400">
-              Selecciona el proyecto de destino para <strong className="text-gray-700 dark:text-gray-300">{articulo.nombre}</strong>.
+              Mueve unidades de <strong className="text-gray-700 dark:text-gray-300">{articulo.nombre}</strong> desde
+              este proyecto a otro. Quedan {articulo.cantidad} {articulo.unidad} disponibles aquí.
             </p>
-            <Select label="Proyecto de destino" value={proyectoDestino}
-              onChange={e => setProyectoDestino(e.target.value)}>
+            <Select label="Proyecto de destino *" value={formMover.proyecto_destino} error={errorsMover.proyecto_destino}
+              onChange={e => setFormMover(f => ({ ...f, proyecto_destino: e.target.value }))}>
               <option value="">Selecciona un proyecto...</option>
               {otrosProyectos.map(p => <option key={p.id} value={p.id}>{p.nombre}</option>)}
             </Select>
+            <Input
+              label="Cantidad a transferir *"
+              type="number" min="0.01" max={articulo.cantidad} step="0.01"
+              value={formMover.cantidad}
+              error={errorsMover.cantidad}
+              onChange={e => setFormMover(f => ({ ...f, cantidad: e.target.value }))}
+              placeholder={`Cantidad en ${articulo.unidad}`}
+            />
+            {operadores.length > 0 ? (
+              <Select label="Operador *" value={formMover.operador} error={errorsMover.operador}
+                onChange={e => setFormMover(f => ({ ...f, operador: e.target.value }))}>
+                <option value="">Selecciona operador...</option>
+                {operadores.map(op => <option key={op.id} value={op.nombre}>{op.nombre}</option>)}
+              </Select>
+            ) : (
+              <Input
+                label="¿Quién realiza el movimiento? *"
+                value={formMover.operador}
+                error={errorsMover.operador}
+                onChange={e => setFormMover(f => ({ ...f, operador: e.target.value }))}
+                placeholder="Tu nombre"
+              />
+            )}
+            <Input
+              label="Motivo (opcional)"
+              value={formMover.motivo}
+              onChange={e => setFormMover(f => ({ ...f, motivo: e.target.value }))}
+              placeholder="Reutilización en otro proyecto..."
+            />
             <div className="flex gap-3 pt-2">
               <Button variant="ghost" onClick={() => setModal(null)} className="flex-1">Cancelar</Button>
-              <Button onClick={handleMover} disabled={!proyectoDestino} className="flex-1">Mover</Button>
+              <Button onClick={handleTransferir} className="flex-1">Transferir</Button>
             </div>
           </div>
         </Modal>

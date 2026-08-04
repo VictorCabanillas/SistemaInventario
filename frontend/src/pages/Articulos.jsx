@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { Plus, ArrowLeft, AlertTriangle, Package, Search, X, Download, Filter, MoreVertical, Edit2, Trash2, Sliders, ArrowUpDown } from 'lucide-react'
-import { getArticulos, getProyectos, getCategorias, getSalas, getOperadores, createArticulo, exportarExcel, updateProyecto, deleteProyecto, createMovimientosBulk } from '../utils/api'
+import { getArticulos, getArticulosGlobal, getProyectos, getCategorias, getSalas, getOperadores, createArticulo, exportarExcel, updateProyecto, deleteProyecto, createMovimientosBulk } from '../utils/api'
 import { Spinner, EmptyState, Toast, Badge, Modal, Input, Select, Button, ProyectoIcon, ColorPicker, IconPicker, DarkModeToggle, ConfirmDialog } from '../components/ui'
 import { useDarkMode } from '../hooks/useDarkMode'
 
@@ -11,6 +11,7 @@ export default function Articulos() {
   const [dark, toggleDark] = useDarkMode()
   const [articulos, setArticulos] = useState([])
   const [proyecto, setProyecto] = useState(null)
+  const [proyectosLista, setProyectosLista] = useState([])
   const [categorias, setCategorias] = useState([])
   const [salas, setSalas] = useState([])
   const [operadores, setOperadores] = useState([])
@@ -26,7 +27,7 @@ export default function Articulos() {
   const [formProyecto, setFormProyecto] = useState({ nombre: '', descripcion: '', color: '#3B82F6', icono: 'Package' })
   const [toast, setToast] = useState(null)
   const [confirmDlg, setConfirmDlg] = useState(null)
-  const [form, setForm] = useState({ nombre: '', categoria_id: '', sala_id: '', cantidad: '', unidad: 'ud', ubicacion: '', stock_minimo: '', notas: '' })
+  const [form, setForm] = useState({ nombre: '', marca: '', referencia: '', proyecto_id: '', categoria_id: '', sala_id: '', cantidad: '', unidad: 'ud', ubicacion: '', stock_minimo: '', notas: '' })
   const [errors, setErrors] = useState({})
   const [bulkItems, setBulkItems] = useState([])
   const [bulkOperador, setBulkOperador] = useState('')
@@ -37,15 +38,17 @@ export default function Articulos() {
 
   async function cargar() {
     try {
-      const [arts, proyects, cats, sls, ops] = await Promise.all([
-        getArticulos(proyectoId),
+      const [proyects, cats, sls, ops] = await Promise.all([
         getProyectos(),
         getCategorias(),
         getSalas(),
         getOperadores()
       ])
+      const proyectoActual = proyects.find(p => p.id === parseInt(proyectoId))
+      const arts = proyectoActual?.es_almacen ? await getArticulosGlobal() : await getArticulos(proyectoId)
       setArticulos(arts)
-      setProyecto(proyects.find(p => p.id === parseInt(proyectoId)))
+      setProyecto(proyectoActual)
+      setProyectosLista(proyects)
       setCategorias(cats)
       setSalas(sls)
       setOperadores(ops)
@@ -56,10 +59,14 @@ export default function Articulos() {
     }
   }
 
+  const esAlmacen = !!proyecto?.es_almacen
+
   const articulosFiltrados = (() => {
     const list = articulos.filter(a => {
       const matchNombre = a.nombre.toLowerCase().includes(filtro.toLowerCase()) ||
-        (a.ubicacion || '').toLowerCase().includes(filtro.toLowerCase())
+        (a.ubicacion || '').toLowerCase().includes(filtro.toLowerCase()) ||
+        (a.marca || '').toLowerCase().includes(filtro.toLowerCase()) ||
+        (a.referencia || '').toLowerCase().includes(filtro.toLowerCase())
       const matchCat = !filtroCat || a.categoria_id === parseInt(filtroCat)
       return matchNombre && matchCat
     })
@@ -82,9 +89,11 @@ export default function Articulos() {
     if (Object.keys(errs).length) { setErrors(errs); return }
 
     try {
-      const nuevo = await createArticulo({
-        proyecto_id: parseInt(proyectoId),
+      await createArticulo({
+        proyecto_id: form.proyecto_id ? parseInt(form.proyecto_id) : parseInt(proyectoId),
         nombre: form.nombre,
+        marca: form.marca || '',
+        referencia: form.referencia || '',
         categoria_id: form.categoria_id ? parseInt(form.categoria_id) : null,
         sala_id: form.sala_id ? parseInt(form.sala_id) : null,
         cantidad: parseFloat(form.cantidad),
@@ -93,7 +102,10 @@ export default function Articulos() {
         stock_minimo: form.stock_minimo ? parseFloat(form.stock_minimo) : null,
         notas: form.notas || null,
       })
-      setArticulos(as => [...as, nuevo])
+      // Refetch (no append optimista): si el artículo ya existía en el catálogo
+      // (misma marca+referencia), esto suma cantidad a una fila existente en vez
+      // de crear una nueva.
+      await cargar()
       setShowModal(false)
       showToast('Artículo creado')
     } catch (e) {
@@ -168,7 +180,7 @@ export default function Articulos() {
       .map(a => {
         const nueva = parseFloat(a.nuevaCantidad)
         return {
-          articulo_id: a.id,
+          stock_id: a.stock_id,
           tipo: nueva > a.cantidad ? 'entrada' : 'salida',
           cantidad: Math.abs(nueva - a.cantidad),
           operador: bulkOperador,
@@ -194,7 +206,7 @@ export default function Articulos() {
   }
 
   function abrirCrear() {
-    setForm({ nombre: '', categoria_id: '', sala_id: '', cantidad: '0', unidad: 'ud', ubicacion: '', stock_minimo: '', notas: '' })
+    setForm({ nombre: '', marca: '', referencia: '', proyecto_id: proyectoId, categoria_id: '', sala_id: '', cantidad: '0', unidad: 'ud', ubicacion: '', stock_minimo: '', notas: '' })
     setErrors({})
     setShowModal(true)
   }
@@ -251,11 +263,15 @@ export default function Articulos() {
                         className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700">
                         <Download size={14} /> Descargar Excel
                       </button>
-                      <div className="my-1 border-t border-gray-100 dark:border-gray-700" />
-                      <button onClick={handleEliminarProyecto}
-                        className="w-full flex items-center gap-2 px-3 py-2 text-sm text-red-600 hover:bg-red-50 dark:hover:bg-red-950">
-                        <Trash2 size={14} /> Eliminar proyecto
-                      </button>
+                      {!proyecto.es_almacen && (
+                        <>
+                          <div className="my-1 border-t border-gray-100 dark:border-gray-700" />
+                          <button onClick={handleEliminarProyecto}
+                            className="w-full flex items-center gap-2 px-3 py-2 text-sm text-red-600 hover:bg-red-50 dark:hover:bg-red-950">
+                            <Trash2 size={14} /> Eliminar proyecto
+                          </button>
+                        </>
+                      )}
                     </div>
                   )}
                 </div>
@@ -316,8 +332,8 @@ export default function Articulos() {
         ) : (
           <div className="space-y-2">
             {articulosFiltrados.map(art => (
-              <div key={art.id}
-                onClick={() => navigate(`/proyectos/${proyectoId}/articulos/${art.id}`)}
+              <div key={art.stock_id}
+                onClick={() => navigate(`/proyectos/${art.proyecto_id}/articulos/${art.id}`)}
                 className={`rounded-xl border p-4 cursor-pointer hover:shadow-sm transition-all flex items-center gap-4
                   ${art.bajo_minimo
                     ? 'border-red-200 dark:border-red-800 bg-red-50/30 dark:bg-red-950/30'
@@ -329,7 +345,13 @@ export default function Articulos() {
                     <span className="font-medium text-gray-800 dark:text-gray-100 text-sm truncate">{art.nombre}</span>
                     {art.bajo_minimo && <AlertTriangle size={13} className="text-red-500 flex-shrink-0" />}
                   </div>
+                  {(art.marca || art.referencia) && (
+                    <p className="text-xs text-gray-400 dark:text-gray-500 truncate">
+                      {[art.marca, art.referencia].filter(Boolean).join(' · ')}
+                    </p>
+                  )}
                   <div className="flex items-center gap-2 flex-wrap">
+                    {esAlmacen && art.proyecto_nombre && <Badge hex={art.proyecto_color}>{art.proyecto_nombre}</Badge>}
                     {art.categoria_nombre && <Badge>{art.categoria_nombre}</Badge>}
                     {(art.sala_nombre || art.ubicacion) && (
                       <span className="text-xs text-gray-400 dark:text-gray-500">
@@ -366,6 +388,23 @@ export default function Articulos() {
           <div className="space-y-4">
             <Input label="Nombre *" value={form.nombre} error={errors.nombre}
               onChange={e => setForm(f => ({ ...f, nombre: e.target.value }))} placeholder="Nombre del artículo" />
+
+            {esAlmacen && (
+              <Select label="Proyecto *" value={form.proyecto_id}
+                onChange={e => setForm(f => ({ ...f, proyecto_id: e.target.value }))}>
+                {proyectosLista.map(p => <option key={p.id} value={p.id}>{p.nombre}</option>)}
+              </Select>
+            )}
+
+            <div className="grid grid-cols-2 gap-3">
+              <Input label="Marca" value={form.marca}
+                onChange={e => setForm(f => ({ ...f, marca: e.target.value }))} placeholder="Ej: Bosch" />
+              <Input label="Referencia" value={form.referencia}
+                onChange={e => setForm(f => ({ ...f, referencia: e.target.value }))} placeholder="Ej: GSR-120" />
+            </div>
+            <p className="text-xs text-gray-400 dark:text-gray-500 -mt-2">
+              Nombre + marca + referencia identifican el artículo: si ya existe, se sumará esta cantidad a su stock en {esAlmacen ? 'el proyecto seleccionado' : 'este proyecto'}.
+            </p>
 
             <Select label="Categoría" value={form.categoria_id}
               onChange={e => setForm(f => ({ ...f, categoria_id: e.target.value }))}>
@@ -442,9 +481,12 @@ export default function Articulos() {
 
             <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
               {bulkItems.map((art, i) => (
-                <div key={art.id} className="flex items-center gap-3 py-2 border-b border-gray-100 dark:border-gray-800 last:border-0">
+                <div key={art.stock_id} className="flex items-center gap-3 py-2 border-b border-gray-100 dark:border-gray-800 last:border-0">
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-gray-800 dark:text-gray-100 truncate">{art.nombre}</p>
+                    <p className="text-sm font-medium text-gray-800 dark:text-gray-100 truncate">
+                      {art.nombre}
+                      {esAlmacen && art.proyecto_nombre && <span className="text-gray-400 dark:text-gray-500 font-normal"> · {art.proyecto_nombre}</span>}
+                    </p>
                     <p className="text-xs text-gray-400 dark:text-gray-500">Actual: {art.cantidad} {art.unidad}</p>
                   </div>
                   <div className="flex items-center gap-2 flex-shrink-0">

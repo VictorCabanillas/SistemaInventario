@@ -6,6 +6,7 @@ from typing import List, Optional
 import os
 import io
 import shutil
+import sqlite3
 import tempfile
 
 ICONOS_DIR = os.path.join(os.path.dirname(__file__), "iconos")
@@ -169,18 +170,21 @@ def delete_operador(id: int):
 # PROYECTOS
 # ─────────────────────────────────────────
 
+PROYECTO_SELECT = """
+    SELECT p.*,
+           COUNT(s.id) as total_articulos,
+           SUM(CASE WHEN COALESCE(s.stock_minimo, a.stock_minimo) IS NOT NULL
+                         AND s.cantidad < COALESCE(s.stock_minimo, a.stock_minimo)
+                    THEN 1 ELSE 0 END) as articulos_bajo_minimo
+    FROM proyectos p
+    LEFT JOIN stock s ON s.proyecto_id = p.id
+    LEFT JOIN articulos a ON a.id = s.articulo_id
+"""
+
 @app.get("/api/proyectos", response_model=List[Proyecto])
 def get_proyectos():
     db = get_db()
-    rows = db.execute("""
-        SELECT p.*,
-               COUNT(a.id) as total_articulos,
-               SUM(CASE WHEN a.stock_minimo IS NOT NULL AND a.cantidad < a.stock_minimo THEN 1 ELSE 0 END) as articulos_bajo_minimo
-        FROM proyectos p
-        LEFT JOIN articulos a ON a.proyecto_id = p.id
-        GROUP BY p.id
-        ORDER BY p.nombre
-    """).fetchall()
+    rows = db.execute(PROYECTO_SELECT + "GROUP BY p.id ORDER BY p.nombre").fetchall()
     db.close()
     return [dict(r) for r in rows]
 
@@ -207,15 +211,7 @@ def update_proyecto(id: int, data: ProyectoUpdate):
         sets = ", ".join(f"{k}=?" for k in fields)
         db.execute(f"UPDATE proyectos SET {sets} WHERE id=?", (*fields.values(), id))
         db.commit()
-    row = db.execute("""
-        SELECT p.*,
-               COUNT(a.id) as total_articulos,
-               SUM(CASE WHEN a.stock_minimo IS NOT NULL AND a.cantidad < a.stock_minimo THEN 1 ELSE 0 END) as articulos_bajo_minimo
-        FROM proyectos p
-        LEFT JOIN articulos a ON a.proyecto_id = p.id
-        WHERE p.id=?
-        GROUP BY p.id
-    """, (id,)).fetchone()
+    row = db.execute(PROYECTO_SELECT + "WHERE p.id=? GROUP BY p.id", (id,)).fetchone()
     db.close()
     if not row:
         raise HTTPException(404, "Proyecto no encontrado")
@@ -224,6 +220,10 @@ def update_proyecto(id: int, data: ProyectoUpdate):
 @app.delete("/api/proyectos/{id}", status_code=204)
 def delete_proyecto(id: int):
     db = get_db()
+    row = db.execute("SELECT es_almacen FROM proyectos WHERE id=?", (id,)).fetchone()
+    if row and row["es_almacen"]:
+        db.close()
+        raise HTTPException(400, "No se puede eliminar el proyecto Almacén general")
     db.execute("DELETE FROM proyectos WHERE id=?", (id,))
     db.commit()
     db.close()
@@ -231,64 +231,193 @@ def delete_proyecto(id: int):
 
 # ─────────────────────────────────────────
 # ARTÍCULOS
+#
+# `articulos` es el catálogo global (único por nombre+marca+referencia).
+# `stock` guarda las existencias de un artículo en un proyecto concreto.
+# Estos endpoints devuelven ambas cosas fusionadas: la vista que usa el
+# frontend es "el artículo, con la cantidad/ubicación/mínimo de ESTE proyecto".
 # ─────────────────────────────────────────
 
 ARTICULO_SELECT = """
-    SELECT a.*, c.nombre as categoria_nombre, s.nombre as sala_nombre,
-           CASE WHEN a.stock_minimo IS NOT NULL AND a.cantidad < a.stock_minimo THEN 1 ELSE 0 END as bajo_minimo
-    FROM articulos a
+    SELECT
+        a.id AS id,
+        s.id AS stock_id,
+        s.proyecto_id AS proyecto_id,
+        p.nombre AS proyecto_nombre,
+        p.color AS proyecto_color,
+        a.nombre AS nombre,
+        a.marca AS marca,
+        a.referencia AS referencia,
+        a.categoria_id AS categoria_id,
+        c.nombre AS categoria_nombre,
+        COALESCE(s.sala_id, a.sala_id) AS sala_id,
+        sal.nombre AS sala_nombre,
+        s.cantidad AS cantidad,
+        a.unidad AS unidad,
+        COALESCE(s.ubicacion, a.ubicacion) AS ubicacion,
+        COALESCE(s.stock_minimo, a.stock_minimo) AS stock_minimo,
+        a.notas AS notas,
+        CASE WHEN COALESCE(s.stock_minimo, a.stock_minimo) IS NOT NULL
+                  AND s.cantidad < COALESCE(s.stock_minimo, a.stock_minimo)
+             THEN 1 ELSE 0 END AS bajo_minimo,
+        s.created_at AS created_at,
+        s.updated_at AS updated_at
+    FROM stock s
+    JOIN articulos a ON a.id = s.articulo_id
+    JOIN proyectos p ON p.id = s.proyecto_id
     LEFT JOIN categorias c ON c.id = a.categoria_id
-    LEFT JOIN salas s ON s.id = a.sala_id
+    LEFT JOIN salas sal ON sal.id = COALESCE(s.sala_id, a.sala_id)
 """
+
+CAMPOS_CATALOGO = {"nombre", "marca", "referencia", "categoria_id", "unidad", "notas"}
+CAMPOS_STOCK = {"sala_id", "ubicacion", "stock_minimo"}
+
+
+@app.get("/api/articulos", response_model=List[Articulo])
+def get_todos_articulos():
+    """Todas las filas de stock, de todos los proyectos (vista del Almacén general)."""
+    db = get_db()
+    rows = db.execute(ARTICULO_SELECT + "ORDER BY a.nombre").fetchall()
+    db.close()
+    return [dict(r) for r in rows]
 
 @app.get("/api/proyectos/{proyecto_id}/articulos", response_model=List[Articulo])
 def get_articulos(proyecto_id: int):
     db = get_db()
-    rows = db.execute(ARTICULO_SELECT + "WHERE a.proyecto_id = ? ORDER BY a.nombre", (proyecto_id,)).fetchall()
+    rows = db.execute(ARTICULO_SELECT + "WHERE s.proyecto_id = ? ORDER BY a.nombre", (proyecto_id,)).fetchall()
     db.close()
     return [dict(r) for r in rows]
 
-@app.get("/api/articulos/{id}", response_model=Articulo)
-def get_articulo(id: int):
+@app.get("/api/proyectos/{proyecto_id}/articulos/{articulo_id}", response_model=Articulo)
+def get_articulo(proyecto_id: int, articulo_id: int):
     db = get_db()
-    row = db.execute(ARTICULO_SELECT + "WHERE a.id = ?", (id,)).fetchone()
+    row = db.execute(ARTICULO_SELECT + "WHERE s.proyecto_id = ? AND a.id = ?", (proyecto_id, articulo_id)).fetchone()
     db.close()
     if not row:
-        raise HTTPException(404, "Artículo no encontrado")
+        raise HTTPException(404, "Artículo no encontrado en este proyecto")
     return dict(row)
+
+@app.get("/api/articulos/{articulo_id}/stock", response_model=List[Articulo])
+def get_stock_por_proyecto(articulo_id: int):
+    """Todas las filas de stock de un artículo del catálogo, en cualquier proyecto."""
+    db = get_db()
+    rows = db.execute(ARTICULO_SELECT + "WHERE a.id = ? ORDER BY p.nombre", (articulo_id,)).fetchall()
+    db.close()
+    return [dict(r) for r in rows]
+
+@app.get("/api/alertas", response_model=List[Articulo])
+def get_alertas():
+    """Todas las filas de stock, de cualquier proyecto, por debajo de su mínimo."""
+    db = get_db()
+    rows = db.execute(ARTICULO_SELECT + """
+        WHERE COALESCE(s.stock_minimo, a.stock_minimo) IS NOT NULL
+          AND s.cantidad < COALESCE(s.stock_minimo, a.stock_minimo)
+        ORDER BY a.nombre
+    """).fetchall()
+    db.close()
+    return [dict(r) for r in rows]
 
 @app.post("/api/articulos", response_model=Articulo, status_code=201)
 def create_articulo(data: ArticuloCreate):
     db = get_db()
-    cur = db.execute("""
-        INSERT INTO articulos (proyecto_id, categoria_id, sala_id, nombre, cantidad, unidad, ubicacion, stock_minimo, notas)
-        VALUES (?,?,?,?,?,?,?,?,?)
-    """, (data.proyecto_id, data.categoria_id, data.sala_id, data.nombre, data.cantidad,
-          data.unidad, data.ubicacion, data.stock_minimo, data.notas))
-    db.commit()
-    row = db.execute(ARTICULO_SELECT + "WHERE a.id = ?", (cur.lastrowid,)).fetchone()
-    db.close()
-    return dict(row)
+    try:
+        if data.proyecto_id is not None:
+            proyecto = db.execute("SELECT id FROM proyectos WHERE id=?", (data.proyecto_id,)).fetchone()
+            if not proyecto:
+                raise HTTPException(404, "Proyecto no encontrado")
+            proyecto_id = data.proyecto_id
+        else:
+            almacen = db.execute("SELECT id FROM proyectos WHERE es_almacen = 1").fetchone()
+            if not almacen:
+                raise HTTPException(500, "No existe un proyecto Almacén general")
+            proyecto_id = almacen["id"]
+
+        marca = data.marca or ""
+        referencia = data.referencia or ""
+
+        articulo = db.execute(
+            "SELECT id FROM articulos WHERE nombre=? AND marca=? AND referencia=?",
+            (data.nombre, marca, referencia)
+        ).fetchone()
+
+        if articulo:
+            articulo_id = articulo["id"]
+        else:
+            cur = db.execute("""
+                INSERT INTO articulos (nombre, marca, referencia, categoria_id, unidad, stock_minimo, sala_id, ubicacion, notas)
+                VALUES (?,?,?,?,?,?,?,?,?)
+            """, (data.nombre, marca, referencia, data.categoria_id, data.unidad,
+                  data.stock_minimo, data.sala_id, data.ubicacion, data.notas))
+            articulo_id = cur.lastrowid
+
+        stock = db.execute(
+            "SELECT id FROM stock WHERE articulo_id=? AND proyecto_id=?",
+            (articulo_id, proyecto_id)
+        ).fetchone()
+
+        if stock:
+            db.execute(
+                "UPDATE stock SET cantidad = cantidad + ?, updated_at=datetime('now') WHERE id=?",
+                (data.cantidad, stock["id"])
+            )
+            stock_id = stock["id"]
+        else:
+            cur = db.execute(
+                "INSERT INTO stock (articulo_id, proyecto_id, cantidad) VALUES (?,?,?)",
+                (articulo_id, proyecto_id, data.cantidad)
+            )
+            stock_id = cur.lastrowid
+
+        if data.cantidad and data.cantidad > 0:
+            db.execute("""
+                INSERT INTO movimientos (articulo_id, tipo, cantidad, motivo, operador, proyecto_id)
+                VALUES (?, 'entrada', ?, 'Alta inicial', 'Sistema', ?)
+            """, (articulo_id, data.cantidad, proyecto_id))
+
+        db.commit()
+        row = db.execute(ARTICULO_SELECT + "WHERE s.id = ?", (stock_id,)).fetchone()
+        return dict(row)
+    except sqlite3.IntegrityError as e:
+        raise HTTPException(400, f"No se pudo crear el artículo: {e}")
+    finally:
+        db.close()
 
 @app.put("/api/articulos/{id}", response_model=Articulo)
-def update_articulo(id: int, data: ArticuloUpdate):
+def update_articulo(id: int, proyecto_id: int, data: ArticuloUpdate):
     db = get_db()
     fields = {k: v for k, v in data.dict().items() if v is not None}
-    if fields:
-        sets = ", ".join(f"{k}=?" for k in fields)
-        sets += ", updated_at=datetime('now')"
-        db.execute(f"UPDATE articulos SET {sets} WHERE id=?", (*fields.values(), id))
+    catalogo_fields = {k: v for k, v in fields.items() if k in CAMPOS_CATALOGO}
+    stock_fields = {k: v for k, v in fields.items() if k in CAMPOS_STOCK}
+
+    try:
+        if catalogo_fields:
+            sets = ", ".join(f"{k}=?" for k in catalogo_fields)
+            sets += ", updated_at=datetime('now')"
+            db.execute(f"UPDATE articulos SET {sets} WHERE id=?", (*catalogo_fields.values(), id))
+
+        if stock_fields:
+            sets = ", ".join(f"{k}=?" for k in stock_fields)
+            sets += ", updated_at=datetime('now')"
+            db.execute(f"UPDATE stock SET {sets} WHERE articulo_id=? AND proyecto_id=?",
+                       (*stock_fields.values(), id, proyecto_id))
+
         db.commit()
-    row = db.execute(ARTICULO_SELECT + "WHERE a.id = ?", (id,)).fetchone()
+    except sqlite3.IntegrityError as e:
+        raise HTTPException(400, f"No se pudo actualizar: {e}")
+
+    row = db.execute(ARTICULO_SELECT + "WHERE a.id = ? AND s.proyecto_id = ?", (id, proyecto_id)).fetchone()
     db.close()
     if not row:
         raise HTTPException(404, "Artículo no encontrado")
     return dict(row)
 
-@app.delete("/api/articulos/{id}", status_code=204)
-def delete_articulo(id: int):
+@app.delete("/api/proyectos/{proyecto_id}/articulos/{articulo_id}", status_code=204)
+def delete_articulo(proyecto_id: int, articulo_id: int):
     db = get_db()
-    db.execute("DELETE FROM articulos WHERE id=?", (id,))
+    db.execute("DELETE FROM stock WHERE articulo_id=? AND proyecto_id=?", (articulo_id, proyecto_id))
+    otros = db.execute("SELECT COUNT(*) as n FROM stock WHERE articulo_id=?", (articulo_id,)).fetchone()
+    if otros["n"] == 0:
+        db.execute("DELETE FROM articulos WHERE id=?", (articulo_id,))
     db.commit()
     db.close()
 
@@ -297,62 +426,107 @@ def delete_articulo(id: int):
 # MOVIMIENTOS DE STOCK
 # ─────────────────────────────────────────
 
+MOVIMIENTO_SELECT = """
+    SELECT m.*, a.nombre as articulo_nombre,
+           po.nombre as proyecto_nombre,
+           porig.nombre as proyecto_origen_nombre,
+           pdest.nombre as proyecto_destino_nombre
+    FROM movimientos m
+    JOIN articulos a ON a.id = m.articulo_id
+    LEFT JOIN proyectos po ON po.id = m.proyecto_id
+    LEFT JOIN proyectos porig ON porig.id = m.proyecto_origen_id
+    LEFT JOIN proyectos pdest ON pdest.id = m.proyecto_destino_id
+"""
+
 @app.get("/api/articulos/{articulo_id}/movimientos", response_model=List[Movimiento])
 def get_movimientos(articulo_id: int, limit: int = 50):
     db = get_db()
-    rows = db.execute("""
-        SELECT m.*, a.nombre as articulo_nombre, p.nombre as proyecto_nombre
-        FROM movimientos m
-        JOIN articulos a ON a.id = m.articulo_id
-        JOIN proyectos p ON p.id = a.proyecto_id
-        WHERE m.articulo_id = ?
-        ORDER BY m.fecha DESC
-        LIMIT ?
-    """, (articulo_id, limit)).fetchall()
+    rows = db.execute(
+        MOVIMIENTO_SELECT + "WHERE m.articulo_id = ? ORDER BY m.fecha DESC LIMIT ?",
+        (articulo_id, limit)
+    ).fetchall()
     db.close()
     return [dict(r) for r in rows]
 
 @app.get("/api/movimientos", response_model=List[Movimiento])
 def get_all_movimientos(limit: int = 100):
     db = get_db()
-    rows = db.execute("""
-        SELECT m.*, a.nombre as articulo_nombre, p.nombre as proyecto_nombre
-        FROM movimientos m
-        JOIN articulos a ON a.id = m.articulo_id
-        JOIN proyectos p ON p.id = a.proyecto_id
-        ORDER BY m.fecha DESC
-        LIMIT ?
-    """, (limit,)).fetchall()
+    rows = db.execute(MOVIMIENTO_SELECT + "ORDER BY m.fecha DESC LIMIT ?", (limit,)).fetchall()
     db.close()
     return [dict(r) for r in rows]
 
 @app.post("/api/movimientos", response_model=Articulo, status_code=201)
 def create_movimiento(data: MovimientoCreate):
     db = get_db()
+    try:
+        if data.tipo == "transferencia":
+            if not (data.articulo_id and data.proyecto_origen_id and data.proyecto_destino_id):
+                raise HTTPException(400, "La transferencia requiere articulo_id, proyecto_origen_id y proyecto_destino_id")
+            if data.proyecto_origen_id == data.proyecto_destino_id:
+                raise HTTPException(400, "El proyecto de origen y el de destino deben ser distintos")
 
-    articulo = db.execute("SELECT * FROM articulos WHERE id=?", (data.articulo_id,)).fetchone()
-    if not articulo:
-        raise HTTPException(404, "Artículo no encontrado")
+            origen = db.execute(
+                "SELECT * FROM stock WHERE articulo_id=? AND proyecto_id=?",
+                (data.articulo_id, data.proyecto_origen_id)
+            ).fetchone()
+            disponible = origen["cantidad"] if origen else 0
+            if not origen or origen["cantidad"] < data.cantidad:
+                raise HTTPException(400, f"Stock insuficiente en el proyecto de origen. Disponible: {disponible}")
 
-    nueva_cantidad = articulo["cantidad"] + data.cantidad if data.tipo == "entrada" else articulo["cantidad"] - data.cantidad
+            destino = db.execute(
+                "SELECT * FROM stock WHERE articulo_id=? AND proyecto_id=?",
+                (data.articulo_id, data.proyecto_destino_id)
+            ).fetchone()
 
-    if nueva_cantidad < 0:
-        raise HTTPException(400, f"Stock insuficiente. Stock actual: {articulo['cantidad']}")
+            db.execute(
+                "UPDATE stock SET cantidad = cantidad - ?, updated_at=datetime('now') WHERE id=?",
+                (data.cantidad, origen["id"])
+            )
+            if destino:
+                db.execute(
+                    "UPDATE stock SET cantidad = cantidad + ?, updated_at=datetime('now') WHERE id=?",
+                    (data.cantidad, destino["id"])
+                )
+            else:
+                db.execute(
+                    "INSERT INTO stock (articulo_id, proyecto_id, cantidad) VALUES (?,?,?)",
+                    (data.articulo_id, data.proyecto_destino_id, data.cantidad)
+                )
 
-    db.execute("""
-        INSERT INTO movimientos (articulo_id, tipo, cantidad, motivo, operador)
-        VALUES (?,?,?,?,?)
-    """, (data.articulo_id, data.tipo, data.cantidad, data.motivo, data.operador))
+            db.execute("""
+                INSERT INTO movimientos (articulo_id, tipo, cantidad, motivo, operador, proyecto_origen_id, proyecto_destino_id)
+                VALUES (?, 'transferencia', ?, ?, ?, ?, ?)
+            """, (data.articulo_id, data.cantidad, data.motivo, data.operador,
+                  data.proyecto_origen_id, data.proyecto_destino_id))
 
-    db.execute("""
-        UPDATE articulos SET cantidad=?, updated_at=datetime('now') WHERE id=?
-    """, (nueva_cantidad, data.articulo_id))
+            db.commit()
+            row = db.execute(ARTICULO_SELECT + "WHERE s.id = ?", (origen["id"],)).fetchone()
+            return dict(row)
 
-    db.commit()
+        # entrada / salida
+        if not data.stock_id:
+            raise HTTPException(400, "El movimiento de entrada/salida requiere stock_id")
 
-    row = db.execute(ARTICULO_SELECT + "WHERE a.id = ?", (data.articulo_id,)).fetchone()
-    db.close()
-    return dict(row)
+        stock = db.execute("SELECT * FROM stock WHERE id=?", (data.stock_id,)).fetchone()
+        if not stock:
+            raise HTTPException(404, "Stock no encontrado")
+
+        nueva_cantidad = stock["cantidad"] + data.cantidad if data.tipo == "entrada" else stock["cantidad"] - data.cantidad
+        if nueva_cantidad < 0:
+            raise HTTPException(400, f"Stock insuficiente. Stock actual: {stock['cantidad']}")
+
+        db.execute("""
+            INSERT INTO movimientos (articulo_id, tipo, cantidad, motivo, operador, proyecto_id)
+            VALUES (?,?,?,?,?,?)
+        """, (stock["articulo_id"], data.tipo, data.cantidad, data.motivo, data.operador, stock["proyecto_id"]))
+
+        db.execute("UPDATE stock SET cantidad=?, updated_at=datetime('now') WHERE id=?", (nueva_cantidad, data.stock_id))
+
+        db.commit()
+        row = db.execute(ARTICULO_SELECT + "WHERE s.id = ?", (data.stock_id,)).fetchone()
+        return dict(row)
+    finally:
+        db.close()
 
 
 # ─────────────────────────────────────────
@@ -362,19 +536,25 @@ def create_movimiento(data: MovimientoCreate):
 @app.get("/api/buscar", response_model=List[ResultadoBusqueda])
 def buscar(q: str = Query(..., min_length=1)):
     db = get_db()
+    like = f"%{q}%"
     rows = db.execute("""
-        SELECT a.id, a.nombre, a.cantidad, a.unidad, a.ubicacion,
-               CASE WHEN a.stock_minimo IS NOT NULL AND a.cantidad < a.stock_minimo THEN 1 ELSE 0 END as bajo_minimo,
+        SELECT a.id, a.nombre, s.cantidad as cantidad, a.unidad,
+               COALESCE(s.ubicacion, a.ubicacion) as ubicacion,
+               CASE WHEN COALESCE(s.stock_minimo, a.stock_minimo) IS NOT NULL
+                         AND s.cantidad < COALESCE(s.stock_minimo, a.stock_minimo)
+                    THEN 1 ELSE 0 END as bajo_minimo,
                p.id as proyecto_id, p.nombre as proyecto_nombre, p.color as proyecto_color,
-               c.nombre as categoria_nombre, s.nombre as sala_nombre
-        FROM articulos a
-        JOIN proyectos p ON p.id = a.proyecto_id
+               c.nombre as categoria_nombre, sal.nombre as sala_nombre
+        FROM stock s
+        JOIN articulos a ON a.id = s.articulo_id
+        JOIN proyectos p ON p.id = s.proyecto_id
         LEFT JOIN categorias c ON c.id = a.categoria_id
-        LEFT JOIN salas s ON s.id = a.sala_id
-        WHERE a.nombre LIKE ? OR a.ubicacion LIKE ? OR c.nombre LIKE ? OR s.nombre LIKE ?
+        LEFT JOIN salas sal ON sal.id = COALESCE(s.sala_id, a.sala_id)
+        WHERE a.nombre LIKE ? OR a.marca LIKE ? OR a.referencia LIKE ?
+           OR COALESCE(s.ubicacion, a.ubicacion) LIKE ? OR c.nombre LIKE ? OR sal.nombre LIKE ?
         ORDER BY a.nombre
         LIMIT 50
-    """, (f"%{q}%", f"%{q}%", f"%{q}%", f"%{q}%")).fetchall()
+    """, (like, like, like, like, like, like)).fetchall()
     db.close()
     return [dict(r) for r in rows]
 
@@ -389,20 +569,21 @@ def create_movimientos_bulk(movimientos: List[MovimientoCreate]):
     resultados = []
     try:
         for data in movimientos:
-            articulo = db.execute("SELECT * FROM articulos WHERE id=?", (data.articulo_id,)).fetchone()
-            if not articulo:
-                raise HTTPException(404, f"Artículo {data.articulo_id} no encontrado")
-            nueva = articulo["cantidad"] + data.cantidad if data.tipo == "entrada" else articulo["cantidad"] - data.cantidad
+            stock = db.execute("SELECT * FROM stock WHERE id=?", (data.stock_id,)).fetchone()
+            if not stock:
+                raise HTTPException(404, f"Stock {data.stock_id} no encontrado")
+            nueva = stock["cantidad"] + data.cantidad if data.tipo == "entrada" else stock["cantidad"] - data.cantidad
             if nueva < 0:
-                raise HTTPException(400, f"Stock insuficiente para '{articulo['nombre']}' (actual: {articulo['cantidad']})")
+                articulo = db.execute("SELECT nombre FROM articulos WHERE id=?", (stock["articulo_id"],)).fetchone()
+                raise HTTPException(400, f"Stock insuficiente para '{articulo['nombre']}' (actual: {stock['cantidad']})")
             db.execute(
-                "INSERT INTO movimientos (articulo_id, tipo, cantidad, motivo, operador) VALUES (?,?,?,?,?)",
-                (data.articulo_id, data.tipo, data.cantidad, data.motivo, data.operador)
+                "INSERT INTO movimientos (articulo_id, tipo, cantidad, motivo, operador, proyecto_id) VALUES (?,?,?,?,?,?)",
+                (stock["articulo_id"], data.tipo, data.cantidad, data.motivo, data.operador, stock["proyecto_id"])
             )
-            db.execute("UPDATE articulos SET cantidad=?, updated_at=datetime('now') WHERE id=?", (nueva, data.articulo_id))
+            db.execute("UPDATE stock SET cantidad=?, updated_at=datetime('now') WHERE id=?", (nueva, data.stock_id))
         db.commit()
         for data in movimientos:
-            row = db.execute(ARTICULO_SELECT + "WHERE a.id=?", (data.articulo_id,)).fetchone()
+            row = db.execute(ARTICULO_SELECT + "WHERE s.id=?", (data.stock_id,)).fetchone()
             if row:
                 resultados.append(dict(row))
     finally:
@@ -463,10 +644,15 @@ def exportar_excel(proyecto_id: int):
         raise HTTPException(404, "Proyecto no encontrado")
 
     articulos = db.execute("""
-        SELECT a.*, c.nombre as categoria_nombre
-        FROM articulos a
+        SELECT a.nombre, a.marca, a.referencia, c.nombre as categoria_nombre,
+               s.cantidad, a.unidad,
+               COALESCE(s.ubicacion, a.ubicacion) as ubicacion,
+               COALESCE(s.stock_minimo, a.stock_minimo) as stock_minimo,
+               s.updated_at
+        FROM stock s
+        JOIN articulos a ON a.id = s.articulo_id
         LEFT JOIN categorias c ON c.id = a.categoria_id
-        WHERE a.proyecto_id = ?
+        WHERE s.proyecto_id = ?
         ORDER BY a.nombre
     """, (proyecto_id,)).fetchall()
 
@@ -474,9 +660,9 @@ def exportar_excel(proyecto_id: int):
         SELECT m.*, a.nombre as articulo_nombre
         FROM movimientos m
         JOIN articulos a ON a.id = m.articulo_id
-        WHERE a.proyecto_id = ?
+        WHERE m.proyecto_id = ? OR m.proyecto_origen_id = ? OR m.proyecto_destino_id = ?
         ORDER BY m.fecha DESC
-    """, (proyecto_id,)).fetchall()
+    """, (proyecto_id, proyecto_id, proyecto_id)).fetchall()
     db.close()
 
     wb = openpyxl.Workbook()
@@ -487,7 +673,7 @@ def exportar_excel(proyecto_id: int):
 
     header_fill = PatternFill("solid", fgColor="1E3A5F")
     header_font = Font(bold=True, color="FFFFFF")
-    headers = ["Nombre", "Categoría", "Cantidad", "Unidad", "Ubicación", "Stock Mínimo", "Estado", "Última actualización"]
+    headers = ["Nombre", "Marca", "Referencia", "Categoría", "Cantidad", "Unidad", "Ubicación", "Stock Mínimo", "Estado", "Última actualización"]
 
     for col, h in enumerate(headers, 1):
         cell = ws1.cell(row=1, column=col, value=h)
@@ -499,15 +685,17 @@ def exportar_excel(proyecto_id: int):
         art = dict(art)
         bajo = art.get("stock_minimo") and art["cantidad"] < art["stock_minimo"]
         ws1.cell(row=row_idx, column=1, value=art["nombre"])
-        ws1.cell(row=row_idx, column=2, value=art.get("categoria_nombre") or "—")
-        ws1.cell(row=row_idx, column=3, value=art["cantidad"])
-        ws1.cell(row=row_idx, column=4, value=art.get("unidad") or "ud")
-        ws1.cell(row=row_idx, column=5, value=art.get("ubicacion") or "—")
-        ws1.cell(row=row_idx, column=6, value=art.get("stock_minimo") or "—")
-        estado_cell = ws1.cell(row=row_idx, column=7, value="⚠ Bajo mínimo" if bajo else "OK")
+        ws1.cell(row=row_idx, column=2, value=art.get("marca") or "—")
+        ws1.cell(row=row_idx, column=3, value=art.get("referencia") or "—")
+        ws1.cell(row=row_idx, column=4, value=art.get("categoria_nombre") or "—")
+        ws1.cell(row=row_idx, column=5, value=art["cantidad"])
+        ws1.cell(row=row_idx, column=6, value=art.get("unidad") or "ud")
+        ws1.cell(row=row_idx, column=7, value=art.get("ubicacion") or "—")
+        ws1.cell(row=row_idx, column=8, value=art.get("stock_minimo") or "—")
+        estado_cell = ws1.cell(row=row_idx, column=9, value="⚠ Bajo mínimo" if bajo else "OK")
         if bajo:
             estado_cell.font = Font(color="CC0000", bold=True)
-        ws1.cell(row=row_idx, column=8, value=art.get("updated_at", ""))
+        ws1.cell(row=row_idx, column=10, value=art.get("updated_at", ""))
 
     for col in range(1, len(headers) + 1):
         ws1.column_dimensions[get_column_letter(col)].width = 18
@@ -527,7 +715,8 @@ def exportar_excel(proyecto_id: int):
         ws2.cell(row=row_idx, column=1, value=mov.get("fecha", ""))
         ws2.cell(row=row_idx, column=2, value=mov.get("articulo_nombre", ""))
         tipo_cell = ws2.cell(row=row_idx, column=3, value=mov["tipo"].capitalize())
-        tipo_cell.font = Font(color="006600" if mov["tipo"] == "entrada" else "CC0000")
+        color_tipo = {"entrada": "006600", "salida": "CC0000", "transferencia": "1E3A5F"}
+        tipo_cell.font = Font(color=color_tipo.get(mov["tipo"], "000000"))
         ws2.cell(row=row_idx, column=4, value=mov["cantidad"])
         ws2.cell(row=row_idx, column=5, value=mov.get("operador", ""))
         ws2.cell(row=row_idx, column=6, value=mov.get("motivo") or "—")

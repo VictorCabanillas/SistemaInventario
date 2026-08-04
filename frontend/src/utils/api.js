@@ -19,16 +19,19 @@ export const createProyecto = (data) => request('/proyectos', { method: 'POST', 
 export const updateProyecto = (id, data) => request(`/proyectos/${id}`, { method: 'PUT', body: JSON.stringify(data) })
 export const deleteProyecto = (id) => request(`/proyectos/${id}`, { method: 'DELETE' })
 
-// Artículos
+// Artículos (catálogo global + stock por proyecto, fusionados en la respuesta)
 export const getArticulos = (proyectoId) => request(`/proyectos/${proyectoId}/articulos`)
-export const getArticulo = (id) => request(`/articulos/${id}`)
+export const getArticulosGlobal = () => request('/articulos')
+export const getArticulo = (proyectoId, articuloId) => request(`/proyectos/${proyectoId}/articulos/${articuloId}`)
+export const getStockArticulo = (articuloId) => request(`/articulos/${articuloId}/stock`)
 export const createArticulo = (data) => request('/articulos', { method: 'POST', body: JSON.stringify(data) })
-export const updateArticulo = (id, data) => request(`/articulos/${id}`, { method: 'PUT', body: JSON.stringify(data) })
-export const deleteArticulo = (id) => request(`/articulos/${id}`, { method: 'DELETE' })
+export const updateArticulo = (id, proyectoId, data) => request(`/articulos/${id}?proyecto_id=${proyectoId}`, { method: 'PUT', body: JSON.stringify(data) })
+export const deleteArticulo = (proyectoId, articuloId) => request(`/proyectos/${proyectoId}/articulos/${articuloId}`, { method: 'DELETE' })
 
 // Movimientos
 export const getMovimientos = (articuloId) => request(`/articulos/${articuloId}/movimientos`)
 export const createMovimiento = (data) => request('/movimientos', { method: 'POST', body: JSON.stringify(data) })
+export const createTransferencia = (data) => request('/movimientos', { method: 'POST', body: JSON.stringify({ ...data, tipo: 'transferencia' }) })
 
 // Categorías
 export const getCategorias = () => request('/categorias')
@@ -47,6 +50,9 @@ export const deleteOperador = (id) => request(`/operadores/${id}`, { method: 'DE
 
 // Búsqueda
 export const buscar = (q) => request(`/buscar?q=${encodeURIComponent(q)}`)
+
+// Alertas de stock bajo mínimo (todos los proyectos)
+export const getAlertas = () => request('/alertas')
 
 // Movimientos bulk
 export const createMovimientosBulk = (data) => request('/movimientos/bulk', { method: 'POST', body: JSON.stringify(data) })

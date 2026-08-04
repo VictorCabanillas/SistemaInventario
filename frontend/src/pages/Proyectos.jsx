@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Plus, Package, Search, AlertTriangle, FolderOpen, MoreVertical, Edit2, Trash2, X, Download, Settings, Upload } from 'lucide-react'
-import { getProyectos, createProyecto, updateProyecto, deleteProyecto, buscar, exportarExcel, getCategorias, createCategoria, deleteCategoria, getSalas, createSala, deleteSala, getOperadores, createOperador, deleteOperador, backupDB, restoreDB } from '../utils/api'
+import { getProyectos, getAlertas, createProyecto, updateProyecto, deleteProyecto, buscar, exportarExcel, getCategorias, createCategoria, deleteCategoria, getSalas, createSala, deleteSala, getOperadores, createOperador, deleteOperador, backupDB, restoreDB } from '../utils/api'
 import { Modal, Button, Input, Toast, Spinner, EmptyState, ColorPicker, IconPicker, ProyectoIcon, Badge, DarkModeToggle, ConfirmDialog } from '../components/ui'
 import { useDarkMode } from '../hooks/useDarkMode'
 
@@ -9,6 +9,7 @@ export default function Proyectos() {
   const navigate = useNavigate()
   const [dark, toggleDark] = useDarkMode()
   const [proyectos, setProyectos] = useState([])
+  const [alertas, setAlertas] = useState([])
   const [loading, setLoading] = useState(true)
   const [busqueda, setBusqueda] = useState('')
   const [resultadosBusqueda, setResultadosBusqueda] = useState(null)
@@ -41,8 +42,9 @@ export default function Proyectos() {
 
   async function cargar() {
     try {
-      const data = await getProyectos()
+      const [data, alerts] = await Promise.all([getProyectos(), getAlertas()])
       setProyectos(data)
+      setAlertas(alerts)
     } catch {
       showToast('Error al cargar proyectos', 'error')
     } finally {
@@ -309,7 +311,22 @@ export default function Proyectos() {
             )}
           </div>
         ) : (
-          loading ? <Spinner /> : proyectos.length === 0 ? (
+          <>
+            {!loading && alertas.length > 0 && (
+              <div onClick={() => navigate('/alertas')}
+                className="mb-3 bg-red-50 dark:bg-red-950/40 rounded-2xl border-2 border-red-200 dark:border-red-800 p-5 cursor-pointer hover:border-red-300 dark:hover:border-red-700 hover:shadow-md transition-all flex items-center gap-4">
+                <div className="w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0 bg-red-100 dark:bg-red-900">
+                  <AlertTriangle size={22} className="text-red-600 dark:text-red-400" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <h2 className="font-semibold text-red-700 dark:text-red-400">Alertas de stock</h2>
+                  <p className="text-sm text-red-500/80 dark:text-red-400/70">
+                    {alertas.length} artículo{alertas.length !== 1 ? 's' : ''} bajo mínimo
+                  </p>
+                </div>
+              </div>
+            )}
+            {loading ? <Spinner /> : proyectos.length === 0 ? (
             <EmptyState icon={FolderOpen} title="Sin proyectos" description="Crea tu primer proyecto para empezar"
               action={<Button onClick={abrirCrear}>Crear proyecto</Button>} />
           ) : (
@@ -325,6 +342,7 @@ export default function Proyectos() {
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 mb-1">
                         <h2 className="font-semibold text-gray-900 dark:text-gray-100">{p.nombre}</h2>
+                        {p.es_almacen && <Badge color="gray">Almacén</Badge>}
                         {p.articulos_bajo_minimo > 0 && (
                           <Badge color="red"><AlertTriangle size={10} className="mr-1" />{p.articulos_bajo_minimo} bajo mínimo</Badge>
                         )}
@@ -347,11 +365,15 @@ export default function Proyectos() {
                             className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700">
                             <Download size={14} /> Descargar Excel
                           </button>
-                          <div className="my-1 border-t border-gray-100 dark:border-gray-700" />
-                          <button onClick={e => handleEliminar(p, e)}
-                            className="w-full flex items-center gap-2 px-3 py-2 text-sm text-red-600 hover:bg-red-50 dark:hover:bg-red-950">
-                            <Trash2 size={14} /> Eliminar
-                          </button>
+                          {!p.es_almacen && (
+                            <>
+                              <div className="my-1 border-t border-gray-100 dark:border-gray-700" />
+                              <button onClick={e => handleEliminar(p, e)}
+                                className="w-full flex items-center gap-2 px-3 py-2 text-sm text-red-600 hover:bg-red-50 dark:hover:bg-red-950">
+                                <Trash2 size={14} /> Eliminar
+                              </button>
+                            </>
+                          )}
                         </div>
                       )}
                     </div>
@@ -359,7 +381,8 @@ export default function Proyectos() {
                 </div>
               ))}
             </div>
-          )
+          )}
+          </>
         )}
       </div>
 
