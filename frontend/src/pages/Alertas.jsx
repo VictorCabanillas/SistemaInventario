@@ -46,7 +46,7 @@ export default function Alertas() {
         ) : (
           <div className="space-y-2">
             {alertas.map(art => (
-              <div key={art.stock_id}
+              <div key={`${art.id}-${art.proyecto_id}`}
                 onClick={() => navigate(`/proyectos/${art.proyecto_id}/articulos/${art.id}`)}
                 className="rounded-xl border border-red-200 dark:border-red-800 bg-red-50/30 dark:bg-red-950/30 p-4 flex items-center gap-4 cursor-pointer hover:border-red-300 dark:hover:border-red-700 hover:shadow-sm transition-all">
                 <div className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: art.proyecto_color || '#EF4444' }} />

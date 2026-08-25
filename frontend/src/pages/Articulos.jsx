@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { Plus, ArrowLeft, AlertTriangle, Package, Search, X, Download, Filter, MoreVertical, Edit2, Trash2, Sliders, ArrowUpDown } from 'lucide-react'
-import { getArticulos, getArticulosGlobal, getProyectos, getCategorias, getSalas, getOperadores, createArticulo, exportarExcel, updateProyecto, deleteProyecto, createMovimientosBulk } from '../utils/api'
+import { Plus, ArrowLeft, AlertTriangle, Package, Search, X, Download, Upload, Filter, MoreVertical, Edit2, Trash2, Sliders, ArrowUpDown } from 'lucide-react'
+import { getArticulos, getArticulosGlobal, getProyectos, getCategorias, getSalas, getOperadores, createArticulo, exportarExcel, updateProyecto, deleteProyecto, createMovimientosBulk, getStockProyecto, getStockGlobal } from '../utils/api'
 import { Spinner, EmptyState, Toast, Badge, Modal, Input, Select, Button, ProyectoIcon, ColorPicker, IconPicker, DarkModeToggle, ConfirmDialog } from '../components/ui'
+import ImportarExcelModal from '../components/ImportarExcelModal'
 import { useDarkMode } from '../hooks/useDarkMode'
 
 export default function Articulos() {
@@ -24,6 +25,7 @@ export default function Articulos() {
   const [showMenuProyecto, setShowMenuProyecto] = useState(false)
   const [showEditProyecto, setShowEditProyecto] = useState(false)
   const [showBulkModal, setShowBulkModal] = useState(false)
+  const [showImportModal, setShowImportModal] = useState(false)
   const [formProyecto, setFormProyecto] = useState({ nombre: '', descripcion: '', color: '#3B82F6', icono: 'Package' })
   const [toast, setToast] = useState(null)
   const [confirmDlg, setConfirmDlg] = useState(null)
@@ -163,12 +165,18 @@ export default function Articulos() {
     }
   }
 
-  function abrirBulk() {
-    setBulkItems(articulos.map(a => ({ ...a, nuevaCantidad: '' })))
-    setBulkOperador('')
-    setBulkMotivo('')
-    setBulkErrors({})
-    setShowBulkModal(true)
+
+  async function abrirBulk() {
+    try {
+      const lineas = esAlmacen ? await getStockGlobal() : await getStockProyecto(proyectoId)
+      setBulkItems(lineas.map(l => ({ ...l, nuevaCantidad: '' })))
+      setBulkOperador('')
+      setBulkMotivo('')
+      setBulkErrors({})
+      setShowBulkModal(true)
+    } catch {
+      showToast('Error al cargar el stock', 'error')
+    }
   }
 
   async function handleBulkGuardar() {
@@ -263,6 +271,10 @@ export default function Articulos() {
                         className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700">
                         <Download size={14} /> Descargar Excel
                       </button>
+                      <button onClick={() => { setShowMenuProyecto(false); setShowImportModal(true) }}
+                        className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700">
+                        <Upload size={14} /> Importar Excel
+                      </button>
                       {!proyecto.es_almacen && (
                         <>
                           <div className="my-1 border-t border-gray-100 dark:border-gray-700" />
@@ -332,7 +344,7 @@ export default function Articulos() {
         ) : (
           <div className="space-y-2">
             {articulosFiltrados.map(art => (
-              <div key={art.stock_id}
+              <div key={`${art.id}-${art.proyecto_id}`}
                 onClick={() => navigate(`/proyectos/${art.proyecto_id}/articulos/${art.id}`)}
                 className={`rounded-xl border p-4 cursor-pointer hover:shadow-sm transition-all flex items-center gap-4
                   ${art.bajo_minimo
@@ -353,7 +365,9 @@ export default function Articulos() {
                   <div className="flex items-center gap-2 flex-wrap">
                     {esAlmacen && art.proyecto_nombre && <Badge hex={art.proyecto_color}>{art.proyecto_nombre}</Badge>}
                     {art.categoria_nombre && <Badge>{art.categoria_nombre}</Badge>}
-                    {(art.sala_nombre || art.ubicacion) && (
+                    {art.num_ubicaciones > 1 ? (
+                      <Badge>{art.num_ubicaciones} ubicaciones</Badge>
+                    ) : (art.sala_nombre || art.ubicacion) && (
                       <span className="text-xs text-gray-400 dark:text-gray-500">
                         📍 {[art.sala_nombre, art.ubicacion].filter(Boolean).join(' · ')}
                       </span>
@@ -403,7 +417,9 @@ export default function Articulos() {
                 onChange={e => setForm(f => ({ ...f, referencia: e.target.value }))} placeholder="Ej: GSR-120" />
             </div>
             <p className="text-xs text-gray-400 dark:text-gray-500 -mt-2">
-              Nombre + marca + referencia identifican el artículo: si ya existe, se sumará esta cantidad a su stock en {esAlmacen ? 'el proyecto seleccionado' : 'este proyecto'}.
+              Nombre + marca + referencia identifican el artículo en el catálogo. Si ya existe y además coincide
+              la ubicación (Armario/Balda) en {esAlmacen ? 'el proyecto seleccionado' : 'este proyecto'}, se sumará
+              la cantidad a esa ubicación; si la ubicación es distinta, se creará como una ubicación nueva.
             </p>
 
             <Select label="Categoría" value={form.categoria_id}
@@ -486,6 +502,7 @@ export default function Articulos() {
                     <p className="text-sm font-medium text-gray-800 dark:text-gray-100 truncate">
                       {art.nombre}
                       {esAlmacen && art.proyecto_nombre && <span className="text-gray-400 dark:text-gray-500 font-normal"> · {art.proyecto_nombre}</span>}
+                      {art.ubicacion && <span className="text-gray-400 dark:text-gray-500 font-normal"> · {art.ubicacion}</span>}
                     </p>
                     <p className="text-xs text-gray-400 dark:text-gray-500">Actual: {art.cantidad} {art.unidad}</p>
                   </div>
@@ -525,6 +542,17 @@ export default function Articulos() {
             </div>
           </div>
         </Modal>
+      )}
+
+      {/* Modal importar Excel */}
+      {showImportModal && (
+        <ImportarExcelModal
+          proyectoId={proyectoId}
+          nombreProyecto={proyecto?.nombre}
+          onClose={() => setShowImportModal(false)}
+          onImportado={cargar}
+          showToast={showToast}
+        />
       )}
 
       {toast && <Toast {...toast} onClose={() => setToast(null)} />}

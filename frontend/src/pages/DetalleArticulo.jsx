@@ -1,9 +1,16 @@
 import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { ArrowLeft, Plus, Minus, Edit2, Trash2, AlertTriangle, Clock, Package, ChevronDown, ChevronUp, ArrowRightLeft } from 'lucide-react'
-import { getArticulo, getStockArticulo, updateArticulo, deleteArticulo, createMovimiento, createTransferencia, getMovimientos, getCategorias, getProyectos, getSalas, getOperadores } from '../utils/api'
+import { ArrowLeft, Plus, Minus, Edit2, Trash2, AlertTriangle, Clock, Package, ChevronDown, ChevronUp, ArrowRightLeft, Ban, Wrench, MapPin } from 'lucide-react'
+import {
+  getArticulo, getStockArticulo, updateArticulo, updateStock, deleteArticulo, deleteStock,
+  createMovimiento, createEntrada, createTransferencia, createBaja, createReparacion,
+  getMovimientos, getCategorias, getProyectos, getSalas, getOperadores
+} from '../utils/api'
 import { Modal, Button, Input, Select, Toast, Spinner, Badge, DarkModeToggle, ConfirmDialog } from '../components/ui'
 import { useDarkMode } from '../hooks/useDarkMode'
+
+const SIN_UBICACION = '(sin ubicación)'
+const NUEVA_UBICACION = '__nueva__'
 
 export default function DetalleArticulo() {
   const { proyectoId, articuloId } = useParams()
@@ -28,45 +35,49 @@ export default function DetalleArticulo() {
   const [formStock, setFormStock] = useState({ tipo: 'entrada', cantidad: '', operador: '', motivo: '' })
   const [errorsStock, setErrorsStock] = useState({})
 
-  const [formMover, setFormMover] = useState({ proyecto_destino: '', cantidad: '', operador: '', motivo: '' })
+  const [formMover, setFormMover] = useState({ stockId: '', proyecto_destino: '', cantidad: '', operador: '', motivo: '' })
   const [errorsMover, setErrorsMover] = useState({})
 
-  useEffect(() => { cargar() }, [proyectoId, articuloId])
+  const [formUbicacion, setFormUbicacion] = useState({ stockId: null, ubicacion: '', sala_id: '' })
+  const [errorsUbicacion, setErrorsUbicacion] = useState({})
+
+  const [formReparar, setFormReparar] = useState({ stockId: null, disponible: 0, cantidad: '', operador: '', motivo: '', ubicacionDestino: '', salaDestino: '' })
+  const [errorsReparar, setErrorsReparar] = useState({})
+
+  useEffect(() => {
+    setLoading(true)
+    cargar()
+      .catch(() => showToast('Error al cargar artículo', 'error'))
+      .finally(() => setLoading(false))
+  }, [proyectoId, articuloId]) // eslint-disable-line react-hooks/exhaustive-deps
 
   async function cargar() {
-    try {
-      const [art, cats, movs, proyects, sls, ops, stockOtros] = await Promise.all([
-        getArticulo(proyectoId, articuloId),
-        getCategorias(),
-        getMovimientos(articuloId),
-        getProyectos(),
-        getSalas(),
-        getOperadores(),
-        getStockArticulo(articuloId),
-      ])
-      setArticulo(art)
-      setCategorias(cats)
-      setMovimientos(movs)
-      setProyectos(proyects)
-      setSalas(sls)
-      setOperadores(ops)
-      setStockOtrosProyectos(stockOtros.filter(s => s.proyecto_id !== parseInt(proyectoId)))
-      setFormInfo({
-        nombre: art.nombre,
-        marca: art.marca || '',
-        referencia: art.referencia || '',
-        categoria_id: art.categoria_id || '',
-        sala_id: art.sala_id || '',
-        unidad: art.unidad,
-        ubicacion: art.ubicacion || '',
-        stock_minimo: art.stock_minimo || '',
-        notas: art.notas || ''
-      })
-    } catch {
-      showToast('Error al cargar artículo', 'error')
-    } finally {
-      setLoading(false)
-    }
+    const art = await getArticulo(proyectoId, articuloId)
+    const [movs, proyects, sls, ops, stockOtros, cats] = await Promise.all([
+      getMovimientos(art.id),
+      getProyectos(),
+      getSalas(),
+      getOperadores(),
+      getStockArticulo(art.id),
+      getCategorias(),
+    ])
+    setArticulo(art)
+    setMovimientos(movs)
+    setProyectos(proyects)
+    setSalas(sls)
+    setOperadores(ops)
+    setCategorias(cats)
+    setStockOtrosProyectos(stockOtros.filter(s => s.proyecto_id !== parseInt(proyectoId)))
+    setFormInfo({
+      nombre: art.nombre,
+      marca: art.marca || '',
+      referencia: art.referencia || '',
+      categoria_id: art.categoria_id || '',
+      unidad: art.unidad,
+      stock_minimo: art.stock_minimo || '',
+      notas: art.notas || ''
+    })
+    return art
   }
 
   async function handleGuardarInfo() {
@@ -75,19 +86,17 @@ export default function DetalleArticulo() {
     if (Object.keys(errs).length) { setErrorsInfo(errs); return }
 
     try {
-      const updated = await updateArticulo(articuloId, proyectoId, {
+      await updateArticulo(articulo.id, {
         nombre: formInfo.nombre,
         marca: formInfo.marca,
         referencia: formInfo.referencia,
         categoria_id: formInfo.categoria_id ? parseInt(formInfo.categoria_id) : null,
-        sala_id: formInfo.sala_id ? parseInt(formInfo.sala_id) : null,
         unidad: formInfo.unidad,
-        ubicacion: formInfo.ubicacion || null,
         stock_minimo: formInfo.stock_minimo ? parseFloat(formInfo.stock_minimo) : null,
         notas: formInfo.notas || null,
       })
-      setArticulo(updated)
       setModal(null)
+      await cargar()
       showToast('Información actualizada')
     } catch (e) {
       showToast(e.message, 'error')
@@ -99,21 +108,44 @@ export default function DetalleArticulo() {
     if (!formStock.cantidad || isNaN(parseFloat(formStock.cantidad)) || parseFloat(formStock.cantidad) <= 0)
       errs.cantidad = 'Introduce una cantidad válida'
     if (!formStock.operador.trim()) errs.operador = 'El nombre es obligatorio'
+    if (formStock.tipo === 'salida' && !formStock.stockId) errs.stockId = 'Selecciona de qué ubicación'
+    if (formStock.tipo === 'entrada' && articulo.ubicaciones.length > 0 && formStock.ubicacionModo === 'existente' && !formStock.stockId)
+      errs.stockId = 'Selecciona una ubicación'
     if (Object.keys(errs).length) { setErrorsStock(errs); return }
 
+    const cantidad = parseFloat(formStock.cantidad)
     try {
-      const updated = await createMovimiento({
-        stock_id: articulo.stock_id,
-        tipo: formStock.tipo,
-        cantidad: parseFloat(formStock.cantidad),
-        operador: formStock.operador,
-        motivo: formStock.motivo || null,
-      })
-      setArticulo(updated)
-      const movs = await getMovimientos(articuloId)
-      setMovimientos(movs)
+      if (formStock.tipo === 'salida' && formStock.esBaja) {
+        await createBaja({
+          stock_id: parseInt(formStock.stockId), cantidad,
+          operador: formStock.operador, motivo: formStock.motivo || null,
+          ubicacion_destino: formStock.ubicacionBaja || null,
+          sala_destino_id: formStock.salaBaja ? parseInt(formStock.salaBaja) : null,
+        })
+      } else if (formStock.tipo === 'entrada' && (articulo.ubicaciones.length === 0 || formStock.ubicacionModo === 'nueva')) {
+        await createEntrada({
+          articulo_id: articulo.id, proyecto_id: parseInt(proyectoId),
+          ubicacion: formStock.ubicacionNueva || null,
+          sala_id: formStock.salaNueva ? parseInt(formStock.salaNueva) : null,
+          cantidad, operador: formStock.operador, motivo: formStock.motivo || null,
+        })
+      } else if (formStock.tipo === 'entrada') {
+        await createEntrada({
+          stock_id: parseInt(formStock.stockId),
+          cantidad, operador: formStock.operador, motivo: formStock.motivo || null,
+        })
+      } else {
+        await createMovimiento({
+          stock_id: parseInt(formStock.stockId), tipo: 'salida',
+          cantidad, operador: formStock.operador, motivo: formStock.motivo || null,
+        })
+      }
       setModal(null)
-      showToast(formStock.tipo === 'entrada' ? 'Stock añadido' : 'Stock retirado')
+      await cargar()
+      showToast(
+        formStock.esBaja ? 'Material dado de baja'
+        : formStock.tipo === 'entrada' ? 'Stock añadido' : 'Stock retirado'
+      )
     } catch (e) {
       showToast(e.message, 'error')
     }
@@ -123,7 +155,7 @@ export default function DetalleArticulo() {
     setConfirmDlg({
       title: '¿Eliminar artículo de este proyecto?',
       message: stockOtrosProyectos.length > 0
-        ? `Se eliminará "${articulo.nombre}" y su historial de este proyecto. El artículo sigue existiendo en otros proyectos.`
+        ? `Se eliminará "${articulo.nombre}" (todas sus ubicaciones) y su historial de este proyecto. El artículo sigue existiendo en otros proyectos.`
         : `Se eliminará "${articulo.nombre}" y todo su historial. Esta acción no se puede deshacer.`,
       confirmLabel: 'Eliminar',
       onConfirm: async () => {
@@ -139,45 +171,130 @@ export default function DetalleArticulo() {
     })
   }
 
+  function handleEliminarUbicacion(u) {
+    setConfirmDlg({
+      title: `¿Eliminar la ubicación "${u.ubicacion || SIN_UBICACION}"?`,
+      message: `Se eliminarán ${u.cantidad} ${articulo.unidad} de esta ubicación. Esta acción no se puede deshacer.`,
+      confirmLabel: 'Eliminar',
+      onConfirm: async () => {
+        setConfirmDlg(null)
+        try {
+          await deleteStock(u.stock_id)
+          showToast('Ubicación eliminada')
+          try { await cargar() } catch { navigate(`/proyectos/${proyectoId}`) }
+        } catch (e) {
+          showToast(e.message, 'error')
+        }
+      }
+    })
+  }
+
   async function handleTransferir() {
     const errs = {}
+    if (!formMover.stockId) errs.stockId = 'Selecciona de qué ubicación'
     if (!formMover.proyecto_destino) errs.proyecto_destino = 'Selecciona un proyecto'
+    const origen = articulo.ubicaciones.find(u => String(u.stock_id) === String(formMover.stockId))
     const cantidad = parseFloat(formMover.cantidad)
     if (!formMover.cantidad || isNaN(cantidad) || cantidad <= 0) errs.cantidad = 'Introduce una cantidad válida'
-    else if (cantidad > articulo.cantidad) errs.cantidad = `Solo hay ${articulo.cantidad} ${articulo.unidad} disponibles`
+    else if (origen && cantidad > origen.cantidad) errs.cantidad = `Solo hay ${origen.cantidad} ${articulo.unidad} disponibles en esta ubicación`
     if (!formMover.operador.trim()) errs.operador = 'El nombre es obligatorio'
     if (Object.keys(errs).length) { setErrorsMover(errs); return }
 
     try {
-      const updated = await createTransferencia({
-        articulo_id: articulo.id,
-        proyecto_origen_id: parseInt(proyectoId),
+      await createTransferencia({
+        stock_id: parseInt(formMover.stockId),
         proyecto_destino_id: parseInt(formMover.proyecto_destino),
         cantidad,
         operador: formMover.operador,
         motivo: formMover.motivo || null,
       })
-      setArticulo(updated)
-      const [movs, stockOtros] = await Promise.all([getMovimientos(articuloId), getStockArticulo(articuloId)])
-      setMovimientos(movs)
-      setStockOtrosProyectos(stockOtros.filter(s => s.proyecto_id !== parseInt(proyectoId)))
       setModal(null)
+      await cargar()
       showToast('Unidades transferidas')
     } catch (e) {
       showToast(e.message, 'error')
     }
   }
 
+  async function handleGuardarUbicacion() {
+    try {
+      const res = await updateStock(formUbicacion.stockId, {
+        ubicacion: formUbicacion.ubicacion || null,
+        sala_id: formUbicacion.sala_id ? parseInt(formUbicacion.sala_id) : null,
+      })
+      setModal(null)
+      await cargar()
+      showToast(res.fusionado ? 'Ubicación actualizada (se fusionó con una existente)' : 'Ubicación actualizada')
+    } catch (e) {
+      showToast(e.message, 'error')
+    }
+  }
+
+  async function handleReparar() {
+    const errs = {}
+    const cantidad = parseFloat(formReparar.cantidad)
+    if (!formReparar.cantidad || isNaN(cantidad) || cantidad <= 0) errs.cantidad = 'Introduce una cantidad válida'
+    else if (cantidad > formReparar.disponible) errs.cantidad = `Solo hay ${formReparar.disponible} ${articulo.unidad} de baja aquí`
+    if (!formReparar.operador.trim()) errs.operador = 'El nombre es obligatorio'
+    if (Object.keys(errs).length) { setErrorsReparar(errs); return }
+
+    try {
+      await createReparacion({
+        stock_id: formReparar.stockId, cantidad,
+        operador: formReparar.operador, motivo: formReparar.motivo || null,
+        ubicacion_destino: formReparar.ubicacionDestino || null,
+        sala_destino_id: formReparar.salaDestino ? parseInt(formReparar.salaDestino) : null,
+      })
+      setModal(null)
+      await cargar()
+      showToast('Material reparado')
+    } catch (e) {
+      showToast(e.message, 'error')
+    }
+  }
+
   function abrirStock(tipo) {
-    setFormStock({ tipo, cantidad: '', operador: '', motivo: '' })
+    const ubicaciones = articulo.ubicaciones
+    setFormStock({
+      tipo,
+      cantidad: '',
+      operador: '',
+      motivo: '',
+      stockId: ubicaciones.length === 1 ? String(ubicaciones[0].stock_id) : '',
+      ubicacionModo: ubicaciones.length > 0 ? 'existente' : 'nueva',
+      ubicacionNueva: '',
+      salaNueva: '',
+      esBaja: false,
+      ubicacionBaja: '',
+      salaBaja: '',
+    })
     setErrorsStock({})
     setModal('stock')
   }
 
   function abrirMover() {
-    setFormMover({ proyecto_destino: '', cantidad: String(articulo.cantidad), operador: '', motivo: '' })
+    const ubicaciones = articulo.ubicaciones
+    const stockId = ubicaciones.length === 1 ? String(ubicaciones[0].stock_id) : ''
+    setFormMover({
+      stockId,
+      proyecto_destino: '',
+      cantidad: stockId ? String(ubicaciones[0].cantidad) : '',
+      operador: '', motivo: '',
+    })
     setErrorsMover({})
     setModal('mover')
+  }
+
+  function abrirEditarUbicacion(u) {
+    setFormUbicacion({ stockId: u.stock_id, ubicacion: u.ubicacion || '', sala_id: u.sala_id || '' })
+    setErrorsUbicacion({})
+    setModal('editarUbicacion')
+  }
+
+  function abrirReparar(b) {
+    setFormReparar({ stockId: b.stock_id, disponible: b.cantidad, cantidad: '', operador: '', motivo: '', ubicacionDestino: '', salaDestino: '' })
+    setErrorsReparar({})
+    setModal('reparar')
   }
 
   function showToast(message, type = 'success') {
@@ -191,8 +308,20 @@ export default function DetalleArticulo() {
   )
   if (!articulo) return null
 
-  const bajominimo = articulo.bajo_minimo
   const otrosProyectos = proyectos.filter(p => p.id !== parseInt(proyectoId))
+  const hayUbicaciones = articulo.ubicaciones.length > 0
+  const puedeTransferir = hayUbicaciones && otrosProyectos.length > 0
+
+  const ubicacionSeleccionadaStock = (formStock.tipo === 'entrada' && formStock.ubicacionModo === 'nueva')
+    ? null
+    : articulo.ubicaciones.find(u => String(u.stock_id) === String(formStock.stockId))
+  const cantidadActualStock = ubicacionSeleccionadaStock ? ubicacionSeleccionadaStock.cantidad : 0
+  const cantidadValidaStock = formStock.cantidad && !isNaN(parseFloat(formStock.cantidad))
+  const resultanteStock = cantidadValidaStock
+    ? (formStock.tipo === 'entrada' ? cantidadActualStock + parseFloat(formStock.cantidad) : cantidadActualStock - parseFloat(formStock.cantidad))
+    : null
+
+  const origenMover = articulo.ubicaciones.find(u => String(u.stock_id) === String(formMover.stockId))
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-950">
@@ -210,13 +339,6 @@ export default function DetalleArticulo() {
             </p>
           </div>
           <DarkModeToggle dark={dark} onToggle={toggleDark} />
-          {otrosProyectos.length > 0 && (
-            <button onClick={abrirMover}
-              className="p-2 rounded-xl hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
-              title="Transferir a otro proyecto">
-              <ArrowRightLeft size={16} className="text-gray-400" />
-            </button>
-          )}
           <button onClick={handleEliminar} className="p-2 rounded-xl hover:bg-red-50 dark:hover:bg-red-950 transition-colors">
             <Trash2 size={16} className="text-red-400" />
           </button>
@@ -226,35 +348,74 @@ export default function DetalleArticulo() {
       <div className="max-w-2xl mx-auto px-4 py-6 space-y-4">
         {/* Tarjeta principal de stock */}
         <div className={`rounded-2xl p-6 text-center ${
-          bajominimo
+          articulo.bajo_minimo
             ? 'bg-red-50 dark:bg-red-950 border-2 border-red-200 dark:border-red-800'
             : 'bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700'
         }`}>
-          {bajominimo && (
+          {articulo.bajo_minimo && (
             <div className="flex items-center justify-center gap-1.5 text-red-600 dark:text-red-400 text-sm font-medium mb-3">
               <AlertTriangle size={14} />
               Stock bajo mínimo
             </div>
           )}
-          <div className={`text-6xl font-bold mb-1 ${bajominimo ? 'text-red-700 dark:text-red-400' : 'text-gray-900 dark:text-gray-50'}`}>
-            {articulo.cantidad}
+          <div className={`text-6xl font-bold mb-1 ${articulo.bajo_minimo ? 'text-red-700 dark:text-red-400' : 'text-gray-900 dark:text-gray-50'}`}>
+            {articulo.cantidad_total}
           </div>
           <div className="text-gray-400 dark:text-gray-500 text-sm">{articulo.unidad}</div>
-          {articulo.stock_minimo && (
+          {articulo.stock_minimo != null && (
             <div className="text-xs text-gray-400 dark:text-gray-500 mt-1">Mínimo: {articulo.stock_minimo} {articulo.unidad}</div>
           )}
 
           <div className="flex gap-3 mt-6">
-            <button onClick={() => abrirStock('salida')}
-              className="flex-1 flex items-center justify-center gap-2 py-3 rounded-xl bg-red-600 hover:bg-red-700 text-white font-semibold transition-colors">
+            <button onClick={() => abrirStock('salida')} disabled={!hayUbicaciones}
+              className="flex-1 flex items-center justify-center gap-2 py-3 rounded-xl bg-red-600 hover:bg-red-700 disabled:opacity-40 disabled:cursor-not-allowed text-white font-semibold transition-colors">
               <Minus size={18} /> Retirar
             </button>
             <button onClick={() => abrirStock('entrada')}
               className="flex-1 flex items-center justify-center gap-2 py-3 rounded-xl bg-green-600 hover:bg-green-700 text-white font-semibold transition-colors">
               <Plus size={18} /> Añadir
             </button>
+            {puedeTransferir && (
+              <button onClick={abrirMover} title="Transferir a otro proyecto"
+                className="px-4 rounded-xl border border-gray-200 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors flex items-center justify-center">
+                <ArrowRightLeft size={18} className="text-gray-500 dark:text-gray-400" />
+              </button>
+            )}
           </div>
         </div>
+
+        {/* Ubicaciones */}
+        {hayUbicaciones && (
+          <div className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-700 p-5">
+            <h2 className="font-semibold text-gray-800 dark:text-gray-100 mb-3">
+              Ubicaciones {articulo.ubicaciones.length > 1 && <Badge>{articulo.ubicaciones.length}</Badge>}
+            </h2>
+            <div className="space-y-2">
+              {articulo.ubicaciones.map(u => (
+                <div key={u.stock_id} className="flex items-center justify-between gap-3 px-3 py-2 rounded-xl bg-gray-50 dark:bg-gray-800 group">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <MapPin size={14} className="text-gray-400 dark:text-gray-500 flex-shrink-0" />
+                    <div className="min-w-0">
+                      <p className="text-sm text-gray-700 dark:text-gray-300 truncate">{u.ubicacion || SIN_UBICACION}</p>
+                      {u.sala_nombre && <p className="text-xs text-gray-400 dark:text-gray-500 truncate">{u.sala_nombre}</p>}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    <span className="text-sm font-semibold text-gray-800 dark:text-gray-100">{u.cantidad} {articulo.unidad}</span>
+                    <button onClick={() => abrirEditarUbicacion(u)}
+                      className="p-1.5 rounded-lg opacity-0 group-hover:opacity-100 hover:bg-gray-200 dark:hover:bg-gray-700 transition-all">
+                      <Edit2 size={13} className="text-gray-500 dark:text-gray-400" />
+                    </button>
+                    <button onClick={() => handleEliminarUbicacion(u)}
+                      className="p-1.5 rounded-lg opacity-0 group-hover:opacity-100 hover:bg-red-100 dark:hover:bg-red-900 transition-all">
+                      <Trash2 size={13} className="text-red-500" />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* Información del artículo */}
         <div className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-700 p-5">
@@ -271,10 +432,8 @@ export default function DetalleArticulo() {
               { label: 'Marca', value: articulo.marca },
               { label: 'Referencia', value: articulo.referencia },
               { label: 'Categoría', value: articulo.categoria_nombre },
-              { label: 'Sala', value: articulo.sala_nombre },
-              { label: 'Armario / Balda', value: articulo.ubicacion },
               { label: 'Unidad de medida', value: articulo.unidad },
-              { label: 'Stock mínimo', value: articulo.stock_minimo ? `${articulo.stock_minimo} ${articulo.unidad}` : null },
+              { label: 'Stock mínimo', value: articulo.stock_minimo != null ? `${articulo.stock_minimo} ${articulo.unidad}` : null },
               { label: 'Notas', value: articulo.notas },
             ].map(({ label, value }) => value ? (
               <div key={label} className="flex items-start gap-3">
@@ -291,11 +450,34 @@ export default function DetalleArticulo() {
             <h2 className="font-semibold text-gray-800 dark:text-gray-100 mb-3">También en otros proyectos</h2>
             <div className="space-y-2">
               {stockOtrosProyectos.map(s => (
-                <div key={s.stock_id}
+                <div key={s.proyecto_id}
                   onClick={() => navigate(`/proyectos/${s.proyecto_id}/articulos/${articulo.id}`)}
                   className="flex items-center justify-between px-3 py-2 rounded-xl bg-gray-50 dark:bg-gray-800 cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors">
                   <span className="text-sm text-gray-700 dark:text-gray-300">{s.proyecto_nombre}</span>
-                  <span className="text-sm font-semibold text-gray-800 dark:text-gray-100">{s.cantidad} {s.unidad}</span>
+                  <span className="text-sm font-semibold text-gray-800 dark:text-gray-100">{s.cantidad_total} {articulo.unidad}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Dado de baja */}
+        {articulo.bajas.length > 0 && (
+          <div className="bg-amber-50/40 dark:bg-amber-950/30 rounded-2xl border-2 border-amber-200 dark:border-amber-800 p-5">
+            <h2 className="font-semibold text-amber-700 dark:text-amber-400 mb-3 flex items-center gap-2">
+              <Ban size={16} /> Dado de baja
+            </h2>
+            <div className="space-y-2">
+              {articulo.bajas.map(b => (
+                <div key={b.stock_id} className="flex items-center justify-between gap-3 px-3 py-2 rounded-xl bg-white dark:bg-gray-900 border border-amber-100 dark:border-amber-900">
+                  <div className="min-w-0">
+                    <p className="text-sm text-gray-700 dark:text-gray-300 truncate">{b.ubicacion || SIN_UBICACION}</p>
+                    <p className="text-xs text-amber-600 dark:text-amber-400">{b.cantidad} {articulo.unidad}</p>
+                  </div>
+                  <button onClick={() => abrirReparar(b)}
+                    className="flex items-center gap-1.5 text-sm text-green-700 dark:text-green-400 hover:text-green-800 font-medium flex-shrink-0">
+                    <Wrench size={14} /> Reparar
+                  </button>
                 </div>
               ))}
             </div>
@@ -325,19 +507,37 @@ export default function DetalleArticulo() {
                   {movimientos.map(mov => {
                     const esTransferencia = mov.tipo === 'transferencia'
                     const saliente = esTransferencia && mov.proyecto_origen_id === parseInt(proyectoId)
-                    const positivo = esTransferencia ? !saliente : mov.tipo === 'entrada'
                     const otroProyectoNombre = esTransferencia
                       ? (saliente ? mov.proyecto_destino_nombre : mov.proyecto_origen_nombre)
                       : null
+
+                    let icono = null, color = '', positivo = true, etiqueta = null
+                    if (esTransferencia) {
+                      icono = <ArrowRightLeft size={13} className="text-blue-600 dark:text-blue-400" />
+                      color = 'bg-blue-100 dark:bg-blue-900 text-blue-600 dark:text-blue-400'
+                      positivo = !saliente
+                    } else if (mov.tipo === 'baja') {
+                      icono = <Ban size={13} className="text-amber-600 dark:text-amber-400" />
+                      color = 'bg-amber-100 dark:bg-amber-900'
+                      positivo = false
+                      etiqueta = 'Dado de baja'
+                    } else if (mov.tipo === 'reparacion') {
+                      icono = <Wrench size={13} className="text-green-600 dark:text-green-400" />
+                      color = 'bg-green-100 dark:bg-green-900'
+                      positivo = true
+                      etiqueta = 'Reparado'
+                    } else {
+                      positivo = mov.tipo === 'entrada'
+                      icono = positivo
+                        ? <Plus size={13} className="text-green-600 dark:text-green-400" />
+                        : <Minus size={13} className="text-red-600 dark:text-red-400" />
+                      color = positivo ? 'bg-green-100 dark:bg-green-900' : 'bg-red-100 dark:bg-red-900'
+                    }
+
                     return (
                       <div key={mov.id} className="flex items-center gap-3 px-5 py-3">
-                        <div className={`w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0
-                          ${esTransferencia ? 'bg-blue-100 dark:bg-blue-900' : positivo ? 'bg-green-100 dark:bg-green-900' : 'bg-red-100 dark:bg-red-900'}`}>
-                          {esTransferencia
-                            ? <ArrowRightLeft size={13} className="text-blue-600 dark:text-blue-400" />
-                            : positivo
-                              ? <Plus size={13} className="text-green-600 dark:text-green-400" />
-                              : <Minus size={13} className="text-red-600 dark:text-red-400" />}
+                        <div className={`w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 ${color}`}>
+                          {icono}
                         </div>
                         <div className="flex-1 min-w-0">
                           <p className="text-sm font-medium text-gray-700 dark:text-gray-300">
@@ -350,11 +550,16 @@ export default function DetalleArticulo() {
                           </p>
                           <p className="text-xs text-gray-400 dark:text-gray-500">
                             {new Date(mov.fecha).toLocaleString('es-ES', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                            {etiqueta && ` · ${etiqueta}`}
                             {mov.motivo && ` · ${mov.motivo}`}
                             {!esTransferencia && mov.proyecto_id !== parseInt(proyectoId) && ` · ${mov.proyecto_nombre}`}
                           </p>
                         </div>
-                        <span className={`font-bold text-sm flex-shrink-0 ${esTransferencia ? 'text-blue-600 dark:text-blue-400' : positivo ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
+                        <span className={`font-bold text-sm flex-shrink-0 ${
+                          esTransferencia ? 'text-blue-600 dark:text-blue-400'
+                          : mov.tipo === 'baja' ? 'text-amber-600 dark:text-amber-400'
+                          : positivo ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'
+                        }`}>
                           {positivo ? '+' : '-'}{mov.cantidad}
                         </span>
                       </div>
@@ -379,9 +584,10 @@ export default function DetalleArticulo() {
               <Input label="Referencia" value={formInfo.referencia}
                 onChange={e => setFormInfo(f => ({ ...f, referencia: e.target.value }))} />
             </div>
-            {stockOtrosProyectos.length > 0 && (
+            {(stockOtrosProyectos.length > 0 || articulo.ubicaciones.length > 1) && (
               <p className="text-xs text-gray-400 dark:text-gray-500 -mt-2">
-                Nombre, marca, referencia y categoría son compartidos: al guardar se actualizarán también en los demás proyectos donde existe este artículo.
+                Estos datos son compartidos por el catálogo: al guardar se actualizarán en todas las
+                ubicaciones y proyectos donde existe este artículo.
               </p>
             )}
             <Select label="Categoría" value={formInfo.categoria_id}
@@ -396,16 +602,6 @@ export default function DetalleArticulo() {
                 value={formInfo.stock_minimo}
                 onChange={e => setFormInfo(f => ({ ...f, stock_minimo: e.target.value }))}
                 placeholder="Opcional" />
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <Select label="Sala" value={formInfo.sala_id}
-                onChange={e => setFormInfo(f => ({ ...f, sala_id: e.target.value }))}>
-                <option value="">Sin sala</option>
-                {salas.map(s => <option key={s.id} value={s.id}>{s.nombre}</option>)}
-              </Select>
-              <Input label="Armario / Balda" value={formInfo.ubicacion}
-                onChange={e => setFormInfo(f => ({ ...f, ubicacion: e.target.value }))}
-                placeholder="Ej: B/2" />
             </div>
             <div className="space-y-1">
               <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">Notas</label>
@@ -429,7 +625,8 @@ export default function DetalleArticulo() {
             <div className="grid grid-cols-2 gap-2">
               {['entrada', 'salida'].map(t => (
                 <button key={t} onClick={() => setFormStock(f => ({ ...f, tipo: t }))}
-                  className={`py-2.5 rounded-xl text-sm font-medium transition-colors border
+                  disabled={t === 'salida' && !hayUbicaciones}
+                  className={`py-2.5 rounded-xl text-sm font-medium transition-colors border disabled:opacity-40 disabled:cursor-not-allowed
                     ${formStock.tipo === t
                       ? t === 'entrada' ? 'bg-green-600 text-white border-green-600' : 'bg-red-600 text-white border-red-600'
                       : 'bg-gray-50 dark:bg-gray-800 text-gray-600 dark:text-gray-400 border-gray-200 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-700'}`}>
@@ -437,6 +634,49 @@ export default function DetalleArticulo() {
                 </button>
               ))}
             </div>
+
+            {formStock.tipo === 'salida' && articulo.ubicaciones.length > 0 && (
+              <Select label="¿De qué ubicación? *" value={formStock.stockId} error={errorsStock.stockId}
+                onChange={e => setFormStock(f => ({ ...f, stockId: e.target.value }))}>
+                <option value="">Selecciona una ubicación...</option>
+                {articulo.ubicaciones.map(u => (
+                  <option key={u.stock_id} value={u.stock_id}>
+                    {u.ubicacion || SIN_UBICACION} ({u.cantidad} {articulo.unidad})
+                  </option>
+                ))}
+              </Select>
+            )}
+
+            {formStock.tipo === 'entrada' && articulo.ubicaciones.length > 0 && (
+              <Select label="¿En qué ubicación? *" value={formStock.ubicacionModo === 'nueva' ? NUEVA_UBICACION : formStock.stockId}
+                error={errorsStock.stockId}
+                onChange={e => {
+                  const v = e.target.value
+                  if (v === NUEVA_UBICACION) setFormStock(f => ({ ...f, ubicacionModo: 'nueva', stockId: '' }))
+                  else setFormStock(f => ({ ...f, ubicacionModo: 'existente', stockId: v }))
+                }}>
+                {articulo.ubicaciones.map(u => (
+                  <option key={u.stock_id} value={u.stock_id}>
+                    {u.ubicacion || SIN_UBICACION} ({u.cantidad} {articulo.unidad})
+                  </option>
+                ))}
+                <option value={NUEVA_UBICACION}>+ Nueva ubicación</option>
+              </Select>
+            )}
+
+            {formStock.tipo === 'entrada' && (articulo.ubicaciones.length === 0 || formStock.ubicacionModo === 'nueva') && (
+              <div className="grid grid-cols-2 gap-3">
+                <Input label="Ubicación"
+                  value={formStock.ubicacionNueva}
+                  onChange={e => setFormStock(f => ({ ...f, ubicacionNueva: e.target.value }))}
+                  placeholder="Ej: Estantería A" />
+                <Select label="Sala" value={formStock.salaNueva}
+                  onChange={e => setFormStock(f => ({ ...f, salaNueva: e.target.value }))}>
+                  <option value="">Sin sala</option>
+                  {salas.map(s => <option key={s.id} value={s.id}>{s.nombre}</option>)}
+                </Select>
+              </div>
+            )}
 
             <Input
               label="Cantidad *"
@@ -447,20 +687,35 @@ export default function DetalleArticulo() {
               placeholder={`Cantidad en ${articulo.unidad}`}
             />
 
-            {formStock.cantidad && !isNaN(parseFloat(formStock.cantidad)) && (
+            {resultanteStock !== null && (
               <div className="bg-gray-50 dark:bg-gray-800 rounded-xl p-3 text-center">
-                <p className="text-xs text-gray-400 dark:text-gray-500 mb-0.5">Stock resultante</p>
-                <p className={`text-2xl font-bold ${
-                  (formStock.tipo === 'entrada'
-                    ? articulo.cantidad + parseFloat(formStock.cantidad)
-                    : articulo.cantidad - parseFloat(formStock.cantidad)) < 0
-                    ? 'text-red-600' : 'text-gray-800 dark:text-gray-100'
-                }`}>
-                  {formStock.tipo === 'entrada'
-                    ? articulo.cantidad + parseFloat(formStock.cantidad)
-                    : articulo.cantidad - parseFloat(formStock.cantidad)
-                  } {articulo.unidad}
+                <p className="text-xs text-gray-400 dark:text-gray-500 mb-0.5">Cantidad en esta ubicación tras la operación</p>
+                <p className={`text-2xl font-bold ${resultanteStock < 0 ? 'text-red-600' : 'text-gray-800 dark:text-gray-100'}`}>
+                  {resultanteStock} {articulo.unidad}
                 </p>
+              </div>
+            )}
+
+            {formStock.tipo === 'salida' && (
+              <div className="rounded-xl border border-gray-200 dark:border-gray-700 p-3 space-y-2">
+                <label className="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300 cursor-pointer">
+                  <input type="checkbox" checked={formStock.esBaja}
+                    onChange={e => setFormStock(f => ({ ...f, esBaja: e.target.checked }))}
+                    className="rounded" />
+                  Marcar como dado de baja (material roto)
+                </label>
+                {formStock.esBaja && (
+                  <div className="grid grid-cols-2 gap-3">
+                    <Input label="Ubicación" value={formStock.ubicacionBaja}
+                      onChange={e => setFormStock(f => ({ ...f, ubicacionBaja: e.target.value }))}
+                      placeholder="Ej: Caja de roturas (opcional)" />
+                    <Select label="Sala" value={formStock.salaBaja}
+                      onChange={e => setFormStock(f => ({ ...f, salaBaja: e.target.value }))}>
+                      <option value="">Sin sala</option>
+                      {salas.map(s => <option key={s.id} value={s.id}>{s.nombre}</option>)}
+                    </Select>
+                  </div>
+                )}
               </div>
             )}
 
@@ -492,7 +747,7 @@ export default function DetalleArticulo() {
               <Button
                 variant={formStock.tipo === 'salida' ? 'danger' : 'primary'}
                 onClick={handleMovimiento} className="flex-1">
-                {formStock.tipo === 'entrada' ? 'Añadir' : 'Retirar'}
+                {formStock.tipo === 'entrada' ? 'Añadir' : formStock.esBaja ? 'Dar de baja' : 'Retirar'}
               </Button>
             </div>
           </div>
@@ -505,8 +760,27 @@ export default function DetalleArticulo() {
           <div className="space-y-4">
             <p className="text-sm text-gray-500 dark:text-gray-400">
               Mueve unidades de <strong className="text-gray-700 dark:text-gray-300">{articulo.nombre}</strong> desde
-              este proyecto a otro. Quedan {articulo.cantidad} {articulo.unidad} disponibles aquí.
+              este proyecto a otro.
             </p>
+            {articulo.ubicaciones.length > 0 && (
+              <Select label="¿Desde qué ubicación? *" value={formMover.stockId} error={errorsMover.stockId}
+                onChange={e => {
+                  const u = articulo.ubicaciones.find(x => String(x.stock_id) === e.target.value)
+                  setFormMover(f => ({ ...f, stockId: e.target.value, cantidad: u ? String(u.cantidad) : '' }))
+                }}>
+                <option value="">Selecciona una ubicación...</option>
+                {articulo.ubicaciones.map(u => (
+                  <option key={u.stock_id} value={u.stock_id}>
+                    {u.ubicacion || SIN_UBICACION} ({u.cantidad} {articulo.unidad})
+                  </option>
+                ))}
+              </Select>
+            )}
+            {origenMover && (
+              <p className="text-xs text-gray-400 dark:text-gray-500 -mt-2">
+                Quedan {origenMover.cantidad} {articulo.unidad} disponibles en esta ubicación.
+              </p>
+            )}
             <Select label="Proyecto de destino *" value={formMover.proyecto_destino} error={errorsMover.proyecto_destino}
               onChange={e => setFormMover(f => ({ ...f, proyecto_destino: e.target.value }))}>
               <option value="">Selecciona un proyecto...</option>
@@ -514,7 +788,7 @@ export default function DetalleArticulo() {
             </Select>
             <Input
               label="Cantidad a transferir *"
-              type="number" min="0.01" max={articulo.cantidad} step="0.01"
+              type="number" min="0.01" max={origenMover?.cantidad} step="0.01"
               value={formMover.cantidad}
               error={errorsMover.cantidad}
               onChange={e => setFormMover(f => ({ ...f, cantidad: e.target.value }))}
@@ -544,6 +818,84 @@ export default function DetalleArticulo() {
             <div className="flex gap-3 pt-2">
               <Button variant="ghost" onClick={() => setModal(null)} className="flex-1">Cancelar</Button>
               <Button onClick={handleTransferir} className="flex-1">Transferir</Button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {/* Modal editar ubicación */}
+      {modal === 'editarUbicacion' && (
+        <Modal title="Editar ubicación" onClose={() => setModal(null)} size="sm">
+          <div className="space-y-4">
+            <p className="text-xs text-gray-400 dark:text-gray-500">
+              Si la ubicación coincide con otra que ya existe para este artículo en este proyecto, se fusionarán sumando cantidades.
+            </p>
+            <Input label="Armario / Balda" value={formUbicacion.ubicacion}
+              onChange={e => setFormUbicacion(f => ({ ...f, ubicacion: e.target.value }))}
+              placeholder="Ej: B/2" />
+            <Select label="Sala" value={formUbicacion.sala_id}
+              onChange={e => setFormUbicacion(f => ({ ...f, sala_id: e.target.value }))}>
+              <option value="">Sin sala</option>
+              {salas.map(s => <option key={s.id} value={s.id}>{s.nombre}</option>)}
+            </Select>
+            <div className="flex gap-3 pt-2">
+              <Button variant="ghost" onClick={() => setModal(null)} className="flex-1">Cancelar</Button>
+              <Button onClick={handleGuardarUbicacion} className="flex-1">Guardar</Button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {/* Modal reparar */}
+      {modal === 'reparar' && (
+        <Modal title="Reparar material" onClose={() => setModal(null)} size="sm">
+          <div className="space-y-4">
+            <p className="text-sm text-gray-500 dark:text-gray-400">
+              Devuelve unidades de <strong className="text-gray-700 dark:text-gray-300">{articulo.nombre}</strong> al
+              stock funcional. Disponibles de baja aquí: {formReparar.disponible} {articulo.unidad}.
+            </p>
+            <Input
+              label="Cantidad a reparar *"
+              type="number" min="0.01" max={formReparar.disponible} step="0.01"
+              value={formReparar.cantidad}
+              error={errorsReparar.cantidad}
+              onChange={e => setFormReparar(f => ({ ...f, cantidad: e.target.value }))}
+              placeholder={`Cantidad en ${articulo.unidad}`}
+            />
+            <div className="grid grid-cols-2 gap-3">
+              <Input label="Ubicación" value={formReparar.ubicacionDestino}
+                onChange={e => setFormReparar(f => ({ ...f, ubicacionDestino: e.target.value }))}
+                placeholder="Igual que la baja (opcional)" />
+              <Select label="Sala" value={formReparar.salaDestino}
+                onChange={e => setFormReparar(f => ({ ...f, salaDestino: e.target.value }))}>
+                <option value="">Sin sala</option>
+                {salas.map(s => <option key={s.id} value={s.id}>{s.nombre}</option>)}
+              </Select>
+            </div>
+            {operadores.length > 0 ? (
+              <Select label="Operador *" value={formReparar.operador} error={errorsReparar.operador}
+                onChange={e => setFormReparar(f => ({ ...f, operador: e.target.value }))}>
+                <option value="">Selecciona operador...</option>
+                {operadores.map(op => <option key={op.id} value={op.nombre}>{op.nombre}</option>)}
+              </Select>
+            ) : (
+              <Input
+                label="¿Quién realiza la reparación? *"
+                value={formReparar.operador}
+                error={errorsReparar.operador}
+                onChange={e => setFormReparar(f => ({ ...f, operador: e.target.value }))}
+                placeholder="Tu nombre"
+              />
+            )}
+            <Input
+              label="Motivo (opcional)"
+              value={formReparar.motivo}
+              onChange={e => setFormReparar(f => ({ ...f, motivo: e.target.value }))}
+              placeholder="Reparado, pieza sustituida..."
+            />
+            <div className="flex gap-3 pt-2">
+              <Button variant="ghost" onClick={() => setModal(null)} className="flex-1">Cancelar</Button>
+              <Button onClick={handleReparar} className="flex-1">Reparar</Button>
             </div>
           </div>
         </Modal>

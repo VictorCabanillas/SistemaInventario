@@ -30,6 +30,12 @@ def _column_exists(cursor, table, column):
     return any(c["name"] == column for c in cols)
 
 
+def _table_exists(cursor, table):
+    return cursor.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name=?", (table,)
+    ).fetchone() is not None
+
+
 def _migrar_catalogo_y_stock(conn, cursor):
     """
     Migra instalaciones antiguas donde `articulos` guardaba proyecto_id y
@@ -136,13 +142,99 @@ def _migrar_catalogo_y_stock(conn, cursor):
     print("Migración de esquema completada: catálogo de artículos + stock por proyecto.")
 
 
+def _migrar_stock_baja(conn, cursor):
+    """
+    Permite varias filas de stock por articulo_id+proyecto_id (una por
+    ubicación/estado): añade `estado` ('ok'/'baja') a `stock`, quita
+    `stock_minimo` de `stock` (pasa a vivir solo en `articulos`, es un valor
+    único por artículo), sustituye el UNIQUE(articulo_id, proyecto_id) por un
+    índice de expresión que incluye ubicación normalizada, y añade 'baja' y
+    'reparacion' al CHECK de movimientos.tipo.
+    Idempotente: si `stock` no existe (instalación nueva, la crea el
+    executescript de abajo con el esquema final) o ya tiene la columna
+    `estado`, no hace nada.
+    """
+    if not _table_exists(cursor, "stock") or _column_exists(cursor, "stock", "estado"):
+        return
+
+    conn.execute("PRAGMA foreign_keys = OFF")
+    cursor.execute("ALTER TABLE stock RENAME TO stock_old")
+    cursor.execute("ALTER TABLE movimientos RENAME TO movimientos_old")
+    conn.commit()
+
+    cursor.executescript("""
+        CREATE TABLE stock (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            articulo_id INTEGER NOT NULL,
+            proyecto_id INTEGER NOT NULL,
+            cantidad REAL NOT NULL DEFAULT 0,
+            sala_id INTEGER,
+            ubicacion TEXT,
+            estado TEXT NOT NULL DEFAULT 'ok' CHECK(estado IN ('ok', 'baja')),
+            created_at TEXT DEFAULT (datetime('now')),
+            updated_at TEXT DEFAULT (datetime('now')),
+            FOREIGN KEY (articulo_id) REFERENCES articulos(id) ON DELETE CASCADE,
+            FOREIGN KEY (proyecto_id) REFERENCES proyectos(id) ON DELETE CASCADE,
+            FOREIGN KEY (sala_id) REFERENCES salas(id) ON DELETE SET NULL
+        );
+        CREATE UNIQUE INDEX ux_stock_articulo_proyecto_ubicacion_estado
+            ON stock(articulo_id, proyecto_id, COALESCE(ubicacion, ''), estado);
+
+        CREATE TABLE movimientos (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            articulo_id INTEGER NOT NULL,
+            tipo TEXT NOT NULL CHECK(tipo IN ('entrada', 'salida', 'transferencia', 'baja', 'reparacion')),
+            cantidad REAL NOT NULL,
+            motivo TEXT,
+            operador TEXT NOT NULL,
+            proyecto_id INTEGER,
+            proyecto_origen_id INTEGER,
+            proyecto_destino_id INTEGER,
+            fecha TEXT DEFAULT (datetime('now')),
+            FOREIGN KEY (articulo_id) REFERENCES articulos(id) ON DELETE CASCADE,
+            FOREIGN KEY (proyecto_id) REFERENCES proyectos(id) ON DELETE SET NULL,
+            FOREIGN KEY (proyecto_origen_id) REFERENCES proyectos(id) ON DELETE SET NULL,
+            FOREIGN KEY (proyecto_destino_id) REFERENCES proyectos(id) ON DELETE SET NULL
+        );
+    """)
+
+    cursor.execute("""
+        INSERT INTO stock (id, articulo_id, proyecto_id, cantidad, sala_id, ubicacion,
+                            estado, created_at, updated_at)
+        SELECT id, articulo_id, proyecto_id, cantidad, sala_id, ubicacion,
+               'ok', created_at, updated_at
+        FROM stock_old
+    """)
+    cursor.execute("""
+        INSERT INTO movimientos (id, articulo_id, tipo, cantidad, motivo, operador,
+                                  proyecto_id, proyecto_origen_id, proyecto_destino_id, fecha)
+        SELECT id, articulo_id, tipo, cantidad, motivo, operador,
+               proyecto_id, proyecto_origen_id, proyecto_destino_id, fecha
+        FROM movimientos_old
+    """)
+
+    for tabla in ("stock", "movimientos"):
+        cursor.execute(
+            "INSERT OR REPLACE INTO sqlite_sequence (name, seq) "
+            f"VALUES (?, (SELECT COALESCE(MAX(id), 0) FROM {tabla}))",
+            (tabla,)
+        )
+
+    cursor.execute("DROP TABLE stock_old")
+    cursor.execute("DROP TABLE movimientos_old")
+    conn.commit()
+    conn.execute("PRAGMA foreign_keys = ON")
+    print("Migración de esquema completada: stock por ubicación/estado + bajas.")
+
+
 def init_db():
     conn = get_db()
     cursor = conn.cursor()
 
-    # Debe ejecutarse antes del executescript: renombra las tablas viejas para
-    # que los CREATE TABLE IF NOT EXISTS de abajo creen el esquema nuevo.
+    # Deben ejecutarse antes del executescript: renombran las tablas viejas
+    # para que los CREATE TABLE IF NOT EXISTS de abajo creen el esquema nuevo.
     _migrar_catalogo_y_stock(conn, cursor)
+    _migrar_stock_baja(conn, cursor)
 
     cursor.executescript("""
         CREATE TABLE IF NOT EXISTS categorias (
@@ -194,21 +286,23 @@ def init_db():
             articulo_id INTEGER NOT NULL,
             proyecto_id INTEGER NOT NULL,
             cantidad REAL NOT NULL DEFAULT 0,
-            stock_minimo REAL,
             sala_id INTEGER,
             ubicacion TEXT,
+            estado TEXT NOT NULL DEFAULT 'ok' CHECK(estado IN ('ok', 'baja')),
             created_at TEXT DEFAULT (datetime('now')),
             updated_at TEXT DEFAULT (datetime('now')),
             FOREIGN KEY (articulo_id) REFERENCES articulos(id) ON DELETE CASCADE,
             FOREIGN KEY (proyecto_id) REFERENCES proyectos(id) ON DELETE CASCADE,
-            FOREIGN KEY (sala_id) REFERENCES salas(id) ON DELETE SET NULL,
-            UNIQUE (articulo_id, proyecto_id)
+            FOREIGN KEY (sala_id) REFERENCES salas(id) ON DELETE SET NULL
         );
+
+        CREATE UNIQUE INDEX IF NOT EXISTS ux_stock_articulo_proyecto_ubicacion_estado
+            ON stock(articulo_id, proyecto_id, COALESCE(ubicacion, ''), estado);
 
         CREATE TABLE IF NOT EXISTS movimientos (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             articulo_id INTEGER NOT NULL,
-            tipo TEXT NOT NULL CHECK(tipo IN ('entrada', 'salida', 'transferencia')),
+            tipo TEXT NOT NULL CHECK(tipo IN ('entrada', 'salida', 'transferencia', 'baja', 'reparacion')),
             cantidad REAL NOT NULL,
             motivo TEXT,
             operador TEXT NOT NULL,

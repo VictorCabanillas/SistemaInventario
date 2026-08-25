@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Plus, Package, Search, AlertTriangle, FolderOpen, MoreVertical, Edit2, Trash2, X, Download, Settings, Upload } from 'lucide-react'
-import { getProyectos, getAlertas, createProyecto, updateProyecto, deleteProyecto, buscar, exportarExcel, getCategorias, createCategoria, deleteCategoria, getSalas, createSala, deleteSala, getOperadores, createOperador, deleteOperador, backupDB, restoreDB } from '../utils/api'
+import { Plus, Package, Search, AlertTriangle, Ban, FolderOpen, MoreVertical, Edit2, Trash2, X, Download, Settings, Upload } from 'lucide-react'
+import { getProyectos, getAlertas, getBajas, createProyecto, updateProyecto, deleteProyecto, buscar, exportarExcel, getCategorias, createCategoria, deleteCategoria, getSalas, createSala, deleteSala, getOperadores, createOperador, deleteOperador, backupDB, restoreDB } from '../utils/api'
 import { Modal, Button, Input, Toast, Spinner, EmptyState, ColorPicker, IconPicker, ProyectoIcon, Badge, DarkModeToggle, ConfirmDialog } from '../components/ui'
+import ImportarExcelModal from '../components/ImportarExcelModal'
 import { useDarkMode } from '../hooks/useDarkMode'
 
 export default function Proyectos() {
@@ -10,11 +11,13 @@ export default function Proyectos() {
   const [dark, toggleDark] = useDarkMode()
   const [proyectos, setProyectos] = useState([])
   const [alertas, setAlertas] = useState([])
+  const [bajas, setBajas] = useState([])
   const [loading, setLoading] = useState(true)
   const [busqueda, setBusqueda] = useState('')
   const [resultadosBusqueda, setResultadosBusqueda] = useState(null)
   const [buscando, setBuscando] = useState(false)
   const [showModal, setShowModal] = useState(false)
+  const [showImportModal, setShowImportModal] = useState(false)
   const [editando, setEditando] = useState(null)
   const [menuAbierto, setMenuAbierto] = useState(null)
   const [toast, setToast] = useState(null)
@@ -42,9 +45,10 @@ export default function Proyectos() {
 
   async function cargar() {
     try {
-      const [data, alerts] = await Promise.all([getProyectos(), getAlertas()])
+      const [data, alerts, bajasList] = await Promise.all([getProyectos(), getAlertas(), getBajas()])
       setProyectos(data)
       setAlertas(alerts)
+      setBajas(bajasList)
     } catch {
       showToast('Error al cargar proyectos', 'error')
     } finally {
@@ -291,12 +295,11 @@ export default function Proyectos() {
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2">
                         <span className="font-medium text-gray-800 dark:text-gray-100 text-sm truncate">{art.nombre}</span>
-                        {art.bajo_minimo && <AlertTriangle size={13} className="text-red-500 flex-shrink-0" />}
                       </div>
                       <p className="text-xs text-gray-400 dark:text-gray-500">{art.proyecto_nombre} · {art.categoria_nombre || 'Sin categoría'}</p>
                     </div>
                     <div className="text-right flex-shrink-0">
-                      <p className={`font-semibold text-sm ${art.bajo_minimo ? 'text-red-600' : 'text-gray-800 dark:text-gray-100'}`}>
+                      <p className="font-semibold text-sm text-gray-800 dark:text-gray-100">
                         {art.cantidad} {art.unidad}
                       </p>
                       {(art.sala_nombre || art.ubicacion) && (
@@ -322,6 +325,20 @@ export default function Proyectos() {
                   <h2 className="font-semibold text-red-700 dark:text-red-400">Alertas de stock</h2>
                   <p className="text-sm text-red-500/80 dark:text-red-400/70">
                     {alertas.length} artículo{alertas.length !== 1 ? 's' : ''} bajo mínimo
+                  </p>
+                </div>
+              </div>
+            )}
+            {!loading && bajas.length > 0 && (
+              <div onClick={() => navigate('/bajas')}
+                className="mb-3 bg-amber-50 dark:bg-amber-950/40 rounded-2xl border-2 border-amber-200 dark:border-amber-800 p-5 cursor-pointer hover:border-amber-300 dark:hover:border-amber-700 hover:shadow-md transition-all flex items-center gap-4">
+                <div className="w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0 bg-amber-100 dark:bg-amber-900">
+                  <Ban size={22} className="text-amber-600 dark:text-amber-400" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <h2 className="font-semibold text-amber-700 dark:text-amber-400">Material dado de baja</h2>
+                  <p className="text-sm text-amber-500/80 dark:text-amber-400/70">
+                    {bajas.length} elemento{bajas.length !== 1 ? 's' : ''} no funcional{bajas.length !== 1 ? 'es' : ''}
                   </p>
                 </div>
               </div>
@@ -434,6 +451,20 @@ export default function Proyectos() {
 
             <div className="border-t border-gray-100 dark:border-gray-800" />
 
+            {/* Importar artículos */}
+            <div>
+              <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wide mb-3">Importar artículos</h3>
+              <Button variant="outline" onClick={() => { setShowSettings(false); setShowImportModal(true) }}
+                className="w-full flex items-center justify-center gap-2">
+                <Upload size={15} /> Importar desde Excel
+              </Button>
+              <p className="text-xs text-gray-400 dark:text-gray-500 mt-2">
+                Volcado masivo sin entrar en cada proyecto: cada fila del Excel indica a qué proyecto va.
+              </p>
+            </div>
+
+            <div className="border-t border-gray-100 dark:border-gray-800" />
+
             {/* Categorías */}
             <div>
               <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wide mb-3">Categorías</h3>
@@ -513,6 +544,14 @@ export default function Proyectos() {
             </div>
           </div>
         </Modal>
+      )}
+
+      {showImportModal && (
+        <ImportarExcelModal
+          onClose={() => setShowImportModal(false)}
+          onImportado={cargar}
+          showToast={showToast}
+        />
       )}
 
       {confirmDlg && <ConfirmDialog {...confirmDlg} onCancel={() => setConfirmDlg(null)} />}
