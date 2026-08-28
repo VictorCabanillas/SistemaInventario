@@ -19,6 +19,7 @@ export default function Articulos() {
   const [loading, setLoading] = useState(true)
   const [filtro, setFiltro] = useState('')
   const [filtroCat, setFiltroCat] = useState('')
+  const [filtroSala, setFiltroSala] = useState('')
   const [showFiltros, setShowFiltros] = useState(false)
   const [ordenar, setOrdenar] = useState('nombre_asc')
   const [showModal, setShowModal] = useState(false)
@@ -36,7 +37,7 @@ export default function Articulos() {
   const [bulkMotivo, setBulkMotivo] = useState('')
   const [bulkErrors, setBulkErrors] = useState({})
 
-  useEffect(() => { cargar() }, [proyectoId])
+  useEffect(() => { cargar() }, [proyectoId, filtroSala]) // eslint-disable-line react-hooks/exhaustive-deps
 
   async function cargar() {
     try {
@@ -47,7 +48,8 @@ export default function Articulos() {
         getOperadores()
       ])
       const proyectoActual = proyects.find(p => p.id === parseInt(proyectoId))
-      const arts = proyectoActual?.es_almacen ? await getArticulosGlobal() : await getArticulos(proyectoId)
+      const salaId = filtroSala || undefined
+      const arts = proyectoActual?.es_almacen ? await getArticulosGlobal(salaId) : await getArticulos(proyectoId, salaId)
       setArticulos(arts)
       setProyecto(proyectoActual)
       setProyectosLista(proyects)
@@ -77,6 +79,10 @@ export default function Articulos() {
       case 'cantidad_asc': list.sort((a, b) => a.cantidad - b.cantidad); break
       case 'cantidad_desc': list.sort((a, b) => b.cantidad - a.cantidad); break
       case 'alertas': list.sort((a, b) => (b.bajo_minimo ? 1 : 0) - (a.bajo_minimo ? 1 : 0)); break
+      case 'actualizado_desc': list.sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at)); break
+      case 'actualizado_asc': list.sort((a, b) => new Date(a.updated_at) - new Date(b.updated_at)); break
+      case 'creado_desc': list.sort((a, b) => new Date(b.created_at) - new Date(a.created_at)); break
+      case 'sin_ubicacion': list.sort((a, b) => (b.sin_ubicacion ? 1 : 0) - (a.sin_ubicacion ? 1 : 0)); break
       default: list.sort((a, b) => a.nombre.localeCompare(b.nombre)); break
     }
     return list
@@ -219,7 +225,7 @@ export default function Articulos() {
     setShowModal(true)
   }
 
-  const hayFiltrosActivos = filtroCat || ordenar !== 'nombre_asc'
+  const hayFiltrosActivos = filtroCat || filtroSala || ordenar !== 'nombre_asc'
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-950">
@@ -315,19 +321,30 @@ export default function Articulos() {
           </div>
 
           {showFiltros && (
-            <div className="mt-2 flex gap-2">
-              <select value={filtroCat} onChange={e => setFiltroCat(e.target.value)}
-                className="flex-1 px-3 py-2 rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 dark:text-gray-100 text-sm outline-none">
-                <option value="">Todas las categorías</option>
-                {categorias.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
-              </select>
+            <div className="mt-2 space-y-2">
+              <div className="flex gap-2">
+                <select value={filtroCat} onChange={e => setFiltroCat(e.target.value)}
+                  className="flex-1 px-3 py-2 rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 dark:text-gray-100 text-sm outline-none">
+                  <option value="">Todas las categorías</option>
+                  {categorias.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+                </select>
+                <select value={filtroSala} onChange={e => setFiltroSala(e.target.value)}
+                  className="flex-1 px-3 py-2 rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 dark:text-gray-100 text-sm outline-none">
+                  <option value="">Todas las salas</option>
+                  {salas.map(s => <option key={s.id} value={s.id}>{s.nombre}</option>)}
+                </select>
+              </div>
               <select value={ordenar} onChange={e => setOrdenar(e.target.value)}
-                className="flex-1 px-3 py-2 rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 dark:text-gray-100 text-sm outline-none">
+                className="w-full px-3 py-2 rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 dark:text-gray-100 text-sm outline-none">
                 <option value="nombre_asc">Nombre A-Z</option>
                 <option value="nombre_desc">Nombre Z-A</option>
                 <option value="cantidad_asc">Cantidad ↑</option>
                 <option value="cantidad_desc">Cantidad ↓</option>
                 <option value="alertas">Alertas primero</option>
+                <option value="actualizado_desc">Modificado más reciente</option>
+                <option value="actualizado_asc">Modificado menos reciente</option>
+                <option value="creado_desc">Creado más reciente</option>
+                <option value="sin_ubicacion">Sin ubicación primero</option>
               </select>
             </div>
           )}
@@ -367,7 +384,9 @@ export default function Articulos() {
                     {art.categoria_nombre && <Badge>{art.categoria_nombre}</Badge>}
                     {art.num_ubicaciones > 1 ? (
                       <Badge>{art.num_ubicaciones} ubicaciones</Badge>
-                    ) : (art.sala_nombre || art.ubicacion) && (
+                    ) : art.sin_ubicacion ? (
+                      <span className="text-xs text-amber-500 dark:text-amber-400">Sin ubicación</span>
+                    ) : (
                       <span className="text-xs text-gray-400 dark:text-gray-500">
                         📍 {[art.sala_nombre, art.ubicacion].filter(Boolean).join(' · ')}
                       </span>

@@ -20,8 +20,9 @@ export const updateProyecto = (id, data) => request(`/proyectos/${id}`, { method
 export const deleteProyecto = (id) => request(`/proyectos/${id}`, { method: 'DELETE' })
 
 // Artículos (catálogo global + stock por proyecto, agregados por ubicación en la respuesta)
-export const getArticulos = (proyectoId) => request(`/proyectos/${proyectoId}/articulos`)
-export const getArticulosGlobal = () => request('/articulos')
+// salaId (opcional) filtra a artículos con ALGUNA ubicación en esa sala, mostrando igualmente el total agregado completo
+export const getArticulos = (proyectoId, salaId) => request(`/proyectos/${proyectoId}/articulos${salaId ? `?sala_id=${salaId}` : ''}`)
+export const getArticulosGlobal = (salaId) => request(`/articulos${salaId ? `?sala_id=${salaId}` : ''}`)
 // Detalle agregado: { ...catálogo, cantidad_total, bajo_minimo, ubicaciones: [...], bajas: [...] }
 export const getArticulo = (proyectoId, articuloId) => request(`/proyectos/${proyectoId}/articulos/${articuloId}`)
 // Total agregado de este artículo en cada OTRO proyecto: [{ proyecto_id, proyecto_nombre, proyecto_color, cantidad_total }]

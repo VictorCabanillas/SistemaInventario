@@ -110,6 +110,7 @@ class Articulo(BaseModel):
     num_ubicaciones: int = 1
     ubicacion: Optional[str] = None  # solo si num_ubicaciones == 1
     sala_nombre: Optional[str] = None  # solo si num_ubicaciones == 1
+    sin_ubicacion: bool = False  # ninguna de sus ubicaciones tiene sala ni armario/balda
     notas: Optional[str]
     created_at: str
     updated_at: str

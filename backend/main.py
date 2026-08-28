@@ -2,7 +2,7 @@ from fastapi import FastAPI, HTTPException, Query, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, StreamingResponse
-from typing import List
+from typing import List, Optional
 import os
 import io
 import re
@@ -414,6 +414,8 @@ ARTICULO_LISTADO_SELECT = """
         COUNT(*) AS num_ubicaciones,
         CASE WHEN COUNT(*) = 1 THEN MAX(s.ubicacion) END AS ubicacion,
         CASE WHEN COUNT(*) = 1 THEN MAX(sal.nombre) END AS sala_nombre,
+        CASE WHEN SUM(CASE WHEN s.ubicacion IS NOT NULL OR s.sala_id IS NOT NULL THEN 1 ELSE 0 END) = 0
+             THEN 1 ELSE 0 END AS sin_ubicacion,
         a.notas AS notas,
         MIN(s.created_at) AS created_at,
         MAX(s.updated_at) AS updated_at
@@ -450,21 +452,39 @@ STOCK_LINEA_SELECT = """
 """
 
 
+# Filtra por artículos que tengan ALGUNA ubicación en la sala indicada, sin
+# restringir la agregación: el total mostrado sigue siendo la suma de TODAS
+# sus ubicaciones (no solo la de esa sala).
+SALA_EXISTS_CLAUSE = """AND EXISTS (
+    SELECT 1 FROM stock s2
+    WHERE s2.articulo_id = a.id AND s2.proyecto_id = s.proyecto_id
+      AND s2.sala_id = ? AND s2.estado = 'ok'
+) """
+
 @app.get("/api/articulos", response_model=List[Articulo])
-def get_todos_articulos():
+def get_todos_articulos(sala_id: Optional[int] = None):
     """Todos los artículos con stock 'ok', de todos los proyectos (vista del Almacén general)."""
     db = get_db()
-    rows = db.execute(ARTICULO_LISTADO_SELECT + "GROUP BY a.id, s.proyecto_id ORDER BY a.nombre").fetchall()
+    query = ARTICULO_LISTADO_SELECT
+    params = []
+    if sala_id is not None:
+        query += SALA_EXISTS_CLAUSE
+        params.append(sala_id)
+    query += "GROUP BY a.id, s.proyecto_id ORDER BY a.nombre"
+    rows = db.execute(query, params).fetchall()
     db.close()
     return [dict(r) for r in rows]
 
 @app.get("/api/proyectos/{proyecto_id}/articulos", response_model=List[Articulo])
-def get_articulos(proyecto_id: int):
+def get_articulos(proyecto_id: int, sala_id: Optional[int] = None):
     db = get_db()
-    rows = db.execute(
-        ARTICULO_LISTADO_SELECT + "AND s.proyecto_id = ? GROUP BY a.id, s.proyecto_id ORDER BY a.nombre",
-        (proyecto_id,)
-    ).fetchall()
+    query = ARTICULO_LISTADO_SELECT + "AND s.proyecto_id = ? "
+    params = [proyecto_id]
+    if sala_id is not None:
+        query += SALA_EXISTS_CLAUSE
+        params.append(sala_id)
+    query += "GROUP BY a.id, s.proyecto_id ORDER BY a.nombre"
+    rows = db.execute(query, params).fetchall()
     db.close()
     return [dict(r) for r in rows]
 
