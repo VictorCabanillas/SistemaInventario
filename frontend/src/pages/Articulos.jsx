@@ -82,6 +82,7 @@ export default function Articulos() {
       case 'actualizado_desc': list.sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at)); break
       case 'actualizado_asc': list.sort((a, b) => new Date(a.updated_at) - new Date(b.updated_at)); break
       case 'creado_desc': list.sort((a, b) => new Date(b.created_at) - new Date(a.created_at)); break
+      case 'proyecto': list.sort((a, b) => a.proyecto_nombre.localeCompare(b.proyecto_nombre) || a.nombre.localeCompare(b.nombre)); break
       case 'sin_ubicacion': list.sort((a, b) => (b.sin_ubicacion ? 1 : 0) - (a.sin_ubicacion ? 1 : 0)); break
       default: list.sort((a, b) => a.nombre.localeCompare(b.nombre)); break
     }
@@ -345,6 +346,7 @@ export default function Articulos() {
                 <option value="actualizado_asc">Modificado menos reciente</option>
                 <option value="creado_desc">Creado más reciente</option>
                 <option value="sin_ubicacion">Sin ubicación primero</option>
+                {esAlmacen && <option value="proyecto">Proyecto</option>}
               </select>
             </div>
           )}
