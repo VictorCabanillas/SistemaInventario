@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { Plus, ArrowLeft, AlertTriangle, Package, Search, X, Download, Upload, Filter, MoreVertical, Edit2, Trash2, Sliders, ArrowUpDown } from 'lucide-react'
-import { getArticulos, getArticulosGlobal, getProyectos, getCategorias, getSalas, getOperadores, createArticulo, exportarExcel, updateProyecto, deleteProyecto, createMovimientosBulk, getStockProyecto, getStockGlobal } from '../utils/api'
+import { getArticulos, getArticulosGlobal, getProyectos, getCategorias, getSalas, getOperadores, createArticulo, exportarExcel, updateProyecto, deleteProyecto, createMovimientosBulk, getStockProyecto, getStockGlobal, getSugerencias } from '../utils/api'
 import { Spinner, EmptyState, Toast, Badge, Modal, Input, Select, Button, ProyectoIcon, ColorPicker, IconPicker, DarkModeToggle, ConfirmDialog } from '../components/ui'
 import ImportarExcelModal from '../components/ImportarExcelModal'
 import { useDarkMode } from '../hooks/useDarkMode'
@@ -16,6 +16,7 @@ export default function Articulos() {
   const [categorias, setCategorias] = useState([])
   const [salas, setSalas] = useState([])
   const [operadores, setOperadores] = useState([])
+  const [sugerencias, setSugerencias] = useState({ nombres: [], marcas: [], referencias: [], ubicaciones: [] })
   const [loading, setLoading] = useState(true)
   const [filtro, setFiltro] = useState('')
   const [filtroCat, setFiltroCat] = useState('')
@@ -41,11 +42,12 @@ export default function Articulos() {
 
   async function cargar() {
     try {
-      const [proyects, cats, sls, ops] = await Promise.all([
+      const [proyects, cats, sls, ops, sug] = await Promise.all([
         getProyectos(),
         getCategorias(),
         getSalas(),
-        getOperadores()
+        getOperadores(),
+        getSugerencias(),
       ])
       const proyectoActual = proyects.find(p => p.id === parseInt(proyectoId))
       const salaId = filtroSala || undefined
@@ -56,6 +58,7 @@ export default function Articulos() {
       setCategorias(cats)
       setSalas(sls)
       setOperadores(ops)
+      setSugerencias(sug)
     } catch {
       showToast('Error al cargar', 'error')
     } finally {
@@ -83,6 +86,7 @@ export default function Articulos() {
       case 'actualizado_asc': list.sort((a, b) => new Date(a.updated_at) - new Date(b.updated_at)); break
       case 'creado_desc': list.sort((a, b) => new Date(b.created_at) - new Date(a.created_at)); break
       case 'proyecto': list.sort((a, b) => a.proyecto_nombre.localeCompare(b.proyecto_nombre) || a.nombre.localeCompare(b.nombre)); break
+      case 'ubicacion': list.sort((a, b) => (a.ubicacion || '￿').localeCompare(b.ubicacion || '￿')); break
       case 'sin_ubicacion': list.sort((a, b) => (b.sin_ubicacion ? 1 : 0) - (a.sin_ubicacion ? 1 : 0)); break
       default: list.sort((a, b) => a.nombre.localeCompare(b.nombre)); break
     }
@@ -325,12 +329,12 @@ export default function Articulos() {
             <div className="mt-2 space-y-2">
               <div className="flex gap-2">
                 <select value={filtroCat} onChange={e => setFiltroCat(e.target.value)}
-                  className="flex-1 px-3 py-2 rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 dark:text-gray-100 text-sm outline-none">
+                  className="flex-1 min-w-0 px-3 py-2 rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 dark:text-gray-100 text-sm outline-none">
                   <option value="">Todas las categorías</option>
                   {categorias.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
                 </select>
                 <select value={filtroSala} onChange={e => setFiltroSala(e.target.value)}
-                  className="flex-1 px-3 py-2 rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 dark:text-gray-100 text-sm outline-none">
+                  className="flex-1 min-w-0 px-3 py-2 rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 dark:text-gray-100 text-sm outline-none">
                   <option value="">Todas las salas</option>
                   {salas.map(s => <option key={s.id} value={s.id}>{s.nombre}</option>)}
                 </select>
@@ -346,6 +350,7 @@ export default function Articulos() {
                 <option value="actualizado_asc">Modificado menos reciente</option>
                 <option value="creado_desc">Creado más reciente</option>
                 <option value="sin_ubicacion">Sin ubicación primero</option>
+                <option value="ubicacion">Ubicación A-Z</option>
                 {esAlmacen && <option value="proyecto">Proyecto</option>}
               </select>
             </div>
@@ -421,7 +426,7 @@ export default function Articulos() {
       {showModal && (
         <Modal title="Nuevo artículo" onClose={() => setShowModal(false)} size="lg">
           <div className="space-y-4">
-            <Input label="Nombre *" value={form.nombre} error={errors.nombre}
+            <Input label="Nombre *" value={form.nombre} error={errors.nombre} list="dl-nombres"
               onChange={e => setForm(f => ({ ...f, nombre: e.target.value }))} placeholder="Nombre del artículo" />
 
             {esAlmacen && (
@@ -432,9 +437,9 @@ export default function Articulos() {
             )}
 
             <div className="grid grid-cols-2 gap-3">
-              <Input label="Marca" value={form.marca}
+              <Input label="Marca" value={form.marca} list="dl-marcas"
                 onChange={e => setForm(f => ({ ...f, marca: e.target.value }))} placeholder="Ej: Bosch" />
-              <Input label="Referencia" value={form.referencia}
+              <Input label="Referencia" value={form.referencia} list="dl-referencias"
                 onChange={e => setForm(f => ({ ...f, referencia: e.target.value }))} placeholder="Ej: GSR-120" />
             </div>
             <p className="text-xs text-gray-400 dark:text-gray-500 -mt-2">
@@ -463,9 +468,14 @@ export default function Articulos() {
                 <option value="">Sin sala</option>
                 {salas.map(s => <option key={s.id} value={s.id}>{s.nombre}</option>)}
               </Select>
-              <Input label="Armario / Balda" value={form.ubicacion}
+              <Input label="Armario / Balda" value={form.ubicacion} list="dl-ubicaciones"
                 onChange={e => setForm(f => ({ ...f, ubicacion: e.target.value }))} placeholder="Ej: B/2" />
             </div>
+
+            <datalist id="dl-nombres">{sugerencias.nombres.map(n => <option key={n} value={n} />)}</datalist>
+            <datalist id="dl-marcas">{sugerencias.marcas.map(n => <option key={n} value={n} />)}</datalist>
+            <datalist id="dl-referencias">{sugerencias.referencias.map(n => <option key={n} value={n} />)}</datalist>
+            <datalist id="dl-ubicaciones">{sugerencias.ubicaciones.map(n => <option key={n} value={n} />)}</datalist>
 
             <Input label="Stock mínimo (opcional)" type="number" min="0" step="0.01"
               value={form.stock_minimo}

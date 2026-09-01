@@ -21,7 +21,7 @@ from schemas import (
     Articulo, ArticuloCreate, ArticuloUpdate, StockUpdate,
     ArticuloDetalle, StockPorProyecto, StockLinea,
     Movimiento, MovimientoCreate,
-    ResultadoBusqueda
+    ResultadoBusqueda, Sugerencias, CatalogoItem, FusionArticulos
 )
 
 app = FastAPI(title="Inventario Almacén", version="1.0.0")
@@ -871,6 +871,78 @@ def buscar(q: str = Query(..., min_length=1)):
     """, (like, like, like, like, like, like)).fetchall()
     db.close()
     return [dict(r) for r in rows]
+
+
+@app.get("/api/sugerencias", response_model=Sugerencias)
+def get_sugerencias():
+    """Valores existentes en el catálogo, para autocompletar nombre/marca/
+    referencia/ubicación al dar de alta o editar artículos y evitar duplicados
+    por pequeñas diferencias de escritura."""
+    db = get_db()
+    nombres = [r["nombre"] for r in db.execute("SELECT DISTINCT nombre FROM articulos ORDER BY nombre").fetchall()]
+    marcas = [r["marca"] for r in db.execute("SELECT DISTINCT marca FROM articulos WHERE marca != '' ORDER BY marca").fetchall()]
+    referencias = [r["referencia"] for r in db.execute("SELECT DISTINCT referencia FROM articulos WHERE referencia != '' ORDER BY referencia").fetchall()]
+    ubicaciones = [r["ubicacion"] for r in db.execute("SELECT DISTINCT ubicacion FROM stock WHERE ubicacion IS NOT NULL ORDER BY ubicacion").fetchall()]
+    db.close()
+    return {"nombres": nombres, "marcas": marcas, "referencias": referencias, "ubicaciones": ubicaciones}
+
+
+@app.get("/api/catalogo", response_model=List[CatalogoItem])
+def buscar_catalogo(q: str = Query(..., min_length=1), excluir: Optional[int] = None):
+    """Busca artículos del catálogo (no filas de stock) por nombre/marca/
+    referencia — usado para elegir el artículo destino al fusionar duplicados."""
+    db = get_db()
+    like = f"%{q}%"
+    rows = db.execute("""
+        SELECT a.id, a.nombre, a.marca, a.referencia, c.nombre as categoria_nombre, a.unidad
+        FROM articulos a
+        LEFT JOIN categorias c ON c.id = a.categoria_id
+        WHERE (a.nombre LIKE ? OR a.marca LIKE ? OR a.referencia LIKE ?)
+          AND a.id != COALESCE(?, -1)
+        ORDER BY a.nombre
+        LIMIT 20
+    """, (like, like, like, excluir)).fetchall()
+    db.close()
+    return [dict(r) for r in rows]
+
+
+@app.post("/api/articulos/{origen_id}/fusionar")
+def fusionar_articulos(origen_id: int, data: FusionArticulos):
+    """Fusiona el artículo `origen_id` dentro de `articulo_destino_id`: mueve
+    todas sus filas de stock (funcionales y de baja) al destino, sumando
+    cantidades donde coincide proyecto+ubicación+estado y conservando las
+    demás como ubicaciones separadas; reasigna el historial de movimientos;
+    borra el artículo de origen. No se puede deshacer."""
+    if origen_id == data.articulo_destino_id:
+        raise HTTPException(400, "Selecciona un artículo distinto para fusionar")
+
+    db = get_db()
+    origen = db.execute("SELECT id FROM articulos WHERE id=?", (origen_id,)).fetchone()
+    destino = db.execute("SELECT id FROM articulos WHERE id=?", (data.articulo_destino_id,)).fetchone()
+    if not origen or not destino:
+        db.close()
+        raise HTTPException(404, "Artículo no encontrado")
+
+    filas_origen = db.execute("SELECT * FROM stock WHERE articulo_id=?", (origen_id,)).fetchall()
+    for fila in filas_origen:
+        destino_stock_id = _find_or_create_stock(
+            db, data.articulo_destino_id, fila["proyecto_id"], fila["ubicacion"], estado=fila["estado"]
+        )
+        db.execute(
+            "UPDATE stock SET cantidad = cantidad + ?, updated_at=datetime('now') WHERE id=?",
+            (fila["cantidad"], destino_stock_id)
+        )
+        if fila["sala_id"] is not None:
+            destino_stock = db.execute("SELECT sala_id FROM stock WHERE id=?", (destino_stock_id,)).fetchone()
+            if destino_stock["sala_id"] is None:
+                db.execute("UPDATE stock SET sala_id=? WHERE id=?", (fila["sala_id"], destino_stock_id))
+        db.execute("DELETE FROM stock WHERE id=?", (fila["id"],))
+
+    db.execute("UPDATE movimientos SET articulo_id=? WHERE articulo_id=?", (data.articulo_destino_id, origen_id))
+    db.execute("DELETE FROM articulos WHERE id=?", (origen_id,))
+    db.commit()
+    db.close()
+    return {"detail": "ok", "articulo_id": data.articulo_destino_id}
 
 
 # ─────────────────────────────────────────

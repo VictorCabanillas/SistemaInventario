@@ -1,10 +1,11 @@
 import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { ArrowLeft, Plus, Minus, Edit2, Trash2, AlertTriangle, Clock, Package, ChevronDown, ChevronUp, ArrowRightLeft, Ban, Wrench, MapPin } from 'lucide-react'
+import { ArrowLeft, Plus, Minus, Edit2, Trash2, AlertTriangle, Clock, Package, ChevronDown, ChevronUp, ArrowRightLeft, Ban, Wrench, MapPin, Merge } from 'lucide-react'
 import {
   getArticulo, getStockArticulo, updateArticulo, updateStock, deleteArticulo, deleteStock,
   createMovimiento, createEntrada, createTransferencia, createBaja, createReparacion,
-  getMovimientos, getCategorias, getProyectos, getSalas, getOperadores
+  getMovimientos, getCategorias, getProyectos, getSalas, getOperadores,
+  getSugerencias, buscarCatalogo, fusionarArticulo
 } from '../utils/api'
 import { Modal, Button, Input, Select, Toast, Spinner, Badge, DarkModeToggle, ConfirmDialog } from '../components/ui'
 import { useDarkMode } from '../hooks/useDarkMode'
@@ -44,6 +45,13 @@ export default function DetalleArticulo() {
   const [formReparar, setFormReparar] = useState({ stockId: null, disponible: 0, cantidad: '', operador: '', motivo: '', ubicacionDestino: '', salaDestino: '' })
   const [errorsReparar, setErrorsReparar] = useState({})
 
+  const [sugerencias, setSugerencias] = useState({ nombres: [], marcas: [], referencias: [], ubicaciones: [] })
+  const [fusionQuery, setFusionQuery] = useState('')
+  const [fusionResultados, setFusionResultados] = useState([])
+  const [fusionBuscando, setFusionBuscando] = useState(false)
+  const [fusionSeleccionado, setFusionSeleccionado] = useState(null)
+  const [fusionando, setFusionando] = useState(false)
+
   useEffect(() => {
     setLoading(true)
     cargar()
@@ -53,13 +61,14 @@ export default function DetalleArticulo() {
 
   async function cargar() {
     const art = await getArticulo(proyectoId, articuloId)
-    const [movs, proyects, sls, ops, stockOtros, cats] = await Promise.all([
+    const [movs, proyects, sls, ops, stockOtros, cats, sug] = await Promise.all([
       getMovimientos(art.id),
       getProyectos(),
       getSalas(),
       getOperadores(),
       getStockArticulo(art.id),
       getCategorias(),
+      getSugerencias(),
     ])
     setArticulo(art)
     setMovimientos(movs)
@@ -67,6 +76,7 @@ export default function DetalleArticulo() {
     setSalas(sls)
     setOperadores(ops)
     setCategorias(cats)
+    setSugerencias(sug)
     setStockOtrosProyectos(stockOtros.filter(s => s.proyecto_id !== parseInt(proyectoId)))
     setFormInfo({
       nombre: art.nombre,
@@ -297,6 +307,41 @@ export default function DetalleArticulo() {
     setModal('reparar')
   }
 
+  function abrirFusionar() {
+    setFusionQuery('')
+    setFusionResultados([])
+    setFusionSeleccionado(null)
+    setModal('fusionar')
+  }
+
+  useEffect(() => {
+    if (!fusionQuery.trim() || !articulo) { setFusionResultados([]); return }
+    setFusionBuscando(true)
+    const t = setTimeout(async () => {
+      try {
+        setFusionResultados(await buscarCatalogo(fusionQuery, articulo.id))
+      } catch {
+        setFusionResultados([])
+      } finally {
+        setFusionBuscando(false)
+      }
+    }, 400)
+    return () => clearTimeout(t)
+  }, [fusionQuery]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function handleFusionar() {
+    if (!fusionSeleccionado) return
+    setFusionando(true)
+    try {
+      await fusionarArticulo(articulo.id, fusionSeleccionado.id)
+      showToast(`Fusionado con "${fusionSeleccionado.nombre}"`)
+      navigate(`/proyectos/${proyectoId}/articulos/${fusionSeleccionado.id}`, { replace: true })
+    } catch (e) {
+      showToast(e.message, 'error')
+      setFusionando(false)
+    }
+  }
+
   function showToast(message, type = 'success') {
     setToast({ message, type })
   }
@@ -339,6 +384,10 @@ export default function DetalleArticulo() {
             </p>
           </div>
           <DarkModeToggle dark={dark} onToggle={toggleDark} />
+          <button onClick={abrirFusionar} title="Fusionar con otro artículo"
+            className="p-2 rounded-xl hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors">
+            <Merge size={16} className="text-gray-400" />
+          </button>
           <button onClick={handleEliminar} className="p-2 rounded-xl hover:bg-red-50 dark:hover:bg-red-950 transition-colors">
             <Trash2 size={16} className="text-red-400" />
           </button>
@@ -576,12 +625,12 @@ export default function DetalleArticulo() {
       {modal === 'editar' && (
         <Modal title="Editar información" onClose={() => setModal(null)} size="lg">
           <div className="space-y-4">
-            <Input label="Nombre *" value={formInfo.nombre} error={errorsInfo.nombre}
+            <Input label="Nombre *" value={formInfo.nombre} error={errorsInfo.nombre} list="dl-nombres"
               onChange={e => setFormInfo(f => ({ ...f, nombre: e.target.value }))} />
             <div className="grid grid-cols-2 gap-3">
-              <Input label="Marca" value={formInfo.marca}
+              <Input label="Marca" value={formInfo.marca} list="dl-marcas"
                 onChange={e => setFormInfo(f => ({ ...f, marca: e.target.value }))} />
-              <Input label="Referencia" value={formInfo.referencia}
+              <Input label="Referencia" value={formInfo.referencia} list="dl-referencias"
                 onChange={e => setFormInfo(f => ({ ...f, referencia: e.target.value }))} />
             </div>
             {(stockOtrosProyectos.length > 0 || articulo.ubicaciones.length > 1) && (
@@ -666,7 +715,7 @@ export default function DetalleArticulo() {
 
             {formStock.tipo === 'entrada' && (articulo.ubicaciones.length === 0 || formStock.ubicacionModo === 'nueva') && (
               <div className="grid grid-cols-2 gap-3">
-                <Input label="Ubicación"
+                <Input label="Ubicación" list="dl-ubicaciones"
                   value={formStock.ubicacionNueva}
                   onChange={e => setFormStock(f => ({ ...f, ubicacionNueva: e.target.value }))}
                   placeholder="Ej: Estantería A" />
@@ -706,7 +755,7 @@ export default function DetalleArticulo() {
                 </label>
                 {formStock.esBaja && (
                   <div className="grid grid-cols-2 gap-3">
-                    <Input label="Ubicación" value={formStock.ubicacionBaja}
+                    <Input label="Ubicación" list="dl-ubicaciones" value={formStock.ubicacionBaja}
                       onChange={e => setFormStock(f => ({ ...f, ubicacionBaja: e.target.value }))}
                       placeholder="Ej: Caja de roturas (opcional)" />
                     <Select label="Sala" value={formStock.salaBaja}
@@ -830,7 +879,7 @@ export default function DetalleArticulo() {
             <p className="text-xs text-gray-400 dark:text-gray-500">
               Si la ubicación coincide con otra que ya existe para este artículo en este proyecto, se fusionarán sumando cantidades.
             </p>
-            <Input label="Armario / Balda" value={formUbicacion.ubicacion}
+            <Input label="Armario / Balda" list="dl-ubicaciones" value={formUbicacion.ubicacion}
               onChange={e => setFormUbicacion(f => ({ ...f, ubicacion: e.target.value }))}
               placeholder="Ej: B/2" />
             <Select label="Sala" value={formUbicacion.sala_id}
@@ -863,7 +912,7 @@ export default function DetalleArticulo() {
               placeholder={`Cantidad en ${articulo.unidad}`}
             />
             <div className="grid grid-cols-2 gap-3">
-              <Input label="Ubicación" value={formReparar.ubicacionDestino}
+              <Input label="Ubicación" list="dl-ubicaciones" value={formReparar.ubicacionDestino}
                 onChange={e => setFormReparar(f => ({ ...f, ubicacionDestino: e.target.value }))}
                 placeholder="Igual que la baja (opcional)" />
               <Select label="Sala" value={formReparar.salaDestino}
@@ -900,6 +949,71 @@ export default function DetalleArticulo() {
           </div>
         </Modal>
       )}
+
+      {/* Modal fusionar con otro artículo */}
+      {modal === 'fusionar' && (
+        <Modal title="Fusionar con otro artículo" onClose={() => setModal(null)}>
+          <div className="space-y-4">
+            <p className="text-sm text-gray-500 dark:text-gray-400">
+              Busca el artículo con el que quieres fusionar <strong className="text-gray-700 dark:text-gray-300">"{articulo.nombre}"</strong>.
+              Se moverá todo su stock (y sus bajas) al artículo elegido: las ubicaciones coincidentes suman
+              cantidad, las distintas se conservan por separado. "{articulo.nombre}" desaparecerá del catálogo.
+              Esta acción no se puede deshacer.
+            </p>
+
+            <Input
+              value={fusionQuery}
+              onChange={e => setFusionQuery(e.target.value)}
+              placeholder="Buscar por nombre, marca o referencia..."
+              autoFocus
+            />
+
+            {fusionBuscando && <Spinner />}
+
+            {!fusionBuscando && fusionQuery.trim() && fusionResultados.length === 0 && (
+              <p className="text-sm text-gray-400 dark:text-gray-500 text-center py-2">Sin resultados</p>
+            )}
+
+            {fusionResultados.length > 0 && (
+              <div className="space-y-1 max-h-48 overflow-y-auto">
+                {fusionResultados.map(r => (
+                  <button key={r.id} type="button" onClick={() => setFusionSeleccionado(r)}
+                    className={`w-full text-left px-3 py-2 rounded-xl border transition-colors ${
+                      fusionSeleccionado?.id === r.id
+                        ? 'border-blue-400 bg-blue-50 dark:bg-blue-900/30'
+                        : 'border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 hover:border-gray-300 dark:hover:border-gray-600'
+                    }`}>
+                    <p className="text-sm font-medium text-gray-800 dark:text-gray-100">{r.nombre}</p>
+                    {(r.marca || r.referencia) && (
+                      <p className="text-xs text-gray-400 dark:text-gray-500">
+                        {[r.marca, r.referencia].filter(Boolean).join(' · ')}
+                      </p>
+                    )}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {fusionSeleccionado && (
+              <div className="rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 p-3 text-sm text-amber-700 dark:text-amber-400">
+                Se fusionará "{articulo.nombre}" dentro de "{fusionSeleccionado.nombre}".
+              </div>
+            )}
+
+            <div className="flex gap-3 pt-2">
+              <Button variant="ghost" onClick={() => setModal(null)} className="flex-1">Cancelar</Button>
+              <Button variant="danger" onClick={handleFusionar} disabled={!fusionSeleccionado || fusionando} className="flex-1">
+                Fusionar
+              </Button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      <datalist id="dl-nombres">{sugerencias.nombres.map(n => <option key={n} value={n} />)}</datalist>
+      <datalist id="dl-marcas">{sugerencias.marcas.map(n => <option key={n} value={n} />)}</datalist>
+      <datalist id="dl-referencias">{sugerencias.referencias.map(n => <option key={n} value={n} />)}</datalist>
+      <datalist id="dl-ubicaciones">{sugerencias.ubicaciones.map(n => <option key={n} value={n} />)}</datalist>
 
       {toast && <Toast {...toast} onClose={() => setToast(null)} />}
 

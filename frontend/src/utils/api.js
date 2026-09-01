@@ -82,6 +82,17 @@ export const subirIcono = async (file) => {
 // Búsqueda
 export const buscar = (q) => request(`/buscar?q=${encodeURIComponent(q)}`)
 
+// Sugerencias de autocompletado (nombre/marca/referencia/ubicación existentes en el catálogo)
+export const getSugerencias = () => request('/sugerencias')
+
+// Catálogo (búsqueda de artículos por nombre/marca/referencia, para elegir destino al fusionar)
+export const buscarCatalogo = (q, excluirId) =>
+  request(`/catalogo?q=${encodeURIComponent(q)}${excluirId ? `&excluir=${excluirId}` : ''}`)
+
+// Fusionar un artículo duplicado dentro de otro (mueve y suma su stock, conserva ubicaciones distintas)
+export const fusionarArticulo = (origenId, destinoId) =>
+  request(`/articulos/${origenId}/fusionar`, { method: 'POST', body: JSON.stringify({ articulo_destino_id: destinoId }) })
+
 // Alertas de stock bajo mínimo (todos los proyectos)
 export const getAlertas = () => request('/alertas')
 

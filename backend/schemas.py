@@ -208,6 +208,25 @@ class Movimiento(BaseModel):
     proyecto_destino_nombre: Optional[str] = None
 
 
+# --- Sugerencias de autocompletado / catálogo / fusión ---
+class Sugerencias(BaseModel):
+    nombres: List[str]
+    marcas: List[str]
+    referencias: List[str]
+    ubicaciones: List[str]
+
+class CatalogoItem(BaseModel):
+    id: int
+    nombre: str
+    marca: str
+    referencia: str
+    categoria_nombre: Optional[str]
+    unidad: str
+
+class FusionArticulos(BaseModel):
+    articulo_destino_id: int
+
+
 # --- Búsqueda global ---
 # Una fila por ubicación que matchea (no agregado): el mínimo es un valor de
 # catálogo, comparar solo esta cantidad parcial contra él sería engañoso, así
