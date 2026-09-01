@@ -96,18 +96,23 @@ def _crear_o_sumar_articulo(db, *, nombre, marca, referencia, categoria_id, unid
 
 def _restar_stock(db, stock_id, cantidad):
     """Resta `cantidad` de una fila de stock; si queda en ~0, borra la fila
-    (y el artículo de catálogo si ya no tiene stock en ningún sitio) en vez
-    de dejar una fila fantasma con cantidad 0."""
+    en vez de dejar una fila fantasma con cantidad 0.
+
+    Importante: NO borra el artículo de catálogo aunque quede sin stock en
+    ningún sitio. Eso solo debe pasar cuando el usuario borra el artículo
+    explícitamente (endpoints de eliminar) — hacerlo aquí, en una operación
+    rutinaria (retirar/baja/reparación/transferencia), causaba dos problemas:
+    perder en silencio la categoría/notas/mínimo/historial del artículo al
+    vaciar su último stock, y un IntegrityError si después se inserta un
+    movimiento referenciando ese articulo_id ya borrado (el propio historial
+    de movimientos tiene ON DELETE CASCADE hacia articulos)."""
     db.execute(
         "UPDATE stock SET cantidad = cantidad - ?, updated_at=datetime('now') WHERE id=?",
         (cantidad, stock_id)
     )
-    row = db.execute("SELECT articulo_id, cantidad FROM stock WHERE id=?", (stock_id,)).fetchone()
+    row = db.execute("SELECT cantidad FROM stock WHERE id=?", (stock_id,)).fetchone()
     if row and abs(row["cantidad"]) < 1e-9:
         db.execute("DELETE FROM stock WHERE id=?", (stock_id,))
-        otros = db.execute("SELECT COUNT(*) as n FROM stock WHERE articulo_id=?", (row["articulo_id"],)).fetchone()
-        if otros["n"] == 0:
-            db.execute("DELETE FROM articulos WHERE id=?", (row["articulo_id"],))
 
 
 # ─────────────────────────────────────────
@@ -966,10 +971,9 @@ def create_movimientos_bulk(movimientos: List[MovimientoCreate]):
                 (stock["articulo_id"], data.tipo, data.cantidad, data.motivo, data.operador, stock["proyecto_id"])
             )
             if abs(nueva) < 1e-9:
+                # Solo se borra la fila de stock vacía; el artículo de catálogo
+                # se conserva (ver nota en _restar_stock).
                 db.execute("DELETE FROM stock WHERE id=?", (data.stock_id,))
-                otros = db.execute("SELECT COUNT(*) as n FROM stock WHERE articulo_id=?", (stock["articulo_id"],)).fetchone()
-                if otros["n"] == 0:
-                    db.execute("DELETE FROM articulos WHERE id=?", (stock["articulo_id"],))
             else:
                 db.execute("UPDATE stock SET cantidad=?, updated_at=datetime('now') WHERE id=?", (nueva, data.stock_id))
         db.commit()
