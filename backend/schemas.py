@@ -127,6 +127,11 @@ class UbicacionStock(BaseModel):
     updated_at: str
 
 
+class ArticuloImagen(BaseModel):
+    id: int
+    filename: str
+
+
 class ArticuloDetalle(BaseModel):
     """Respuesta del detalle de un artículo en un proyecto: catálogo +
     total agregado + desglose por ubicación (funcional y de baja)."""
@@ -146,6 +151,7 @@ class ArticuloDetalle(BaseModel):
     bajo_minimo: bool = False
     ubicaciones: List[UbicacionStock] = []
     bajas: List[UbicacionStock] = []
+    imagenes: List[ArticuloImagen] = []
 
 
 class StockPorProyecto(BaseModel):

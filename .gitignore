@@ -6,9 +6,10 @@ __pycache__/
 *.pyd
 .Python
 
-# Base de datos (generada en runtime)
+# Base de datos y archivos subidos (generados en runtime)
 data/*
 !data/.gitkeep
+backend/imagenes_articulos/
 
 # Frontend
 frontend/node_modules/

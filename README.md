@@ -141,7 +141,7 @@ docker compose logs -f backend
 Busca la línea `Base de datos inicializada en /data/inventario.db` (o el mensaje de migración de esquema, si la versión nueva añadió columnas/tablas) sin errores.
 
 Notas
-- La base de datos (`./data`), los iconos personalizados (`./backend/iconos`) y los backups (`./backups`) están montados como volúmenes: sobreviven a la reconstrucción de las imágenes, no hace falta ninguna acción manual para conservarlos.
+- La base de datos (`./data`), los iconos personalizados (`./backend/iconos`), las fotos de artículos (`./backend/imagenes_articulos`) y los backups (`./backups`) están montados como volúmenes: sobreviven a la reconstrucción de las imágenes, no hace falta ninguna acción manual para conservarlos.
 - Las migraciones de esquema (cambios en la estructura de la base de datos) se aplican solas al arrancar el backend — son idempotentes, así que reiniciar varias veces no duplica ni rompe nada.
 - Antes de una actualización grande, conviene descargar un backup desde la propia app (Configuración → Descargar backup) o copiar `./data/inventario.db` a mano, por si hay que volver atrás.
 - Para revertir: `git checkout <commit-o-tag-anterior>` y repetir `docker compose up -d --build`.

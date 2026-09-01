@@ -1,11 +1,12 @@
 import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { ArrowLeft, Plus, Minus, Edit2, Trash2, AlertTriangle, Clock, Package, ChevronDown, ChevronUp, ArrowRightLeft, Ban, Wrench, MapPin, Merge } from 'lucide-react'
+import { ArrowLeft, Plus, Minus, Edit2, Trash2, AlertTriangle, Clock, Package, ChevronDown, ChevronUp, ArrowRightLeft, Ban, Wrench, MapPin, Merge, X, Image as ImageIcon } from 'lucide-react'
 import {
   getArticulo, getStockArticulo, updateArticulo, updateStock, deleteArticulo, deleteStock,
   createMovimiento, createEntrada, createTransferencia, createBaja, createReparacion,
   getMovimientos, getCategorias, getProyectos, getSalas, getOperadores,
-  getSugerencias, buscarCatalogo, fusionarArticulo
+  getSugerencias, buscarCatalogo, fusionarArticulo,
+  subirImagenesArticulo, eliminarImagenArticulo
 } from '../utils/api'
 import { Modal, Button, Input, Select, Toast, Spinner, Badge, DarkModeToggle, ConfirmDialog } from '../components/ui'
 import { useDarkMode } from '../hooks/useDarkMode'
@@ -51,6 +52,9 @@ export default function DetalleArticulo() {
   const [fusionBuscando, setFusionBuscando] = useState(false)
   const [fusionSeleccionado, setFusionSeleccionado] = useState(null)
   const [fusionando, setFusionando] = useState(false)
+
+  const [subiendoImagenes, setSubiendoImagenes] = useState(false)
+  const [imagenAmpliada, setImagenAmpliada] = useState(null)
 
   useEffect(() => {
     setLoading(true)
@@ -342,6 +346,40 @@ export default function DetalleArticulo() {
     }
   }
 
+  async function handleSubirImagenes(e) {
+    const files = Array.from(e.target.files || [])
+    e.target.value = ''
+    if (files.length === 0) return
+    setSubiendoImagenes(true)
+    try {
+      await subirImagenesArticulo(articulo.id, files)
+      await cargar()
+      showToast(`${files.length} imagen${files.length !== 1 ? 'es' : ''} añadida${files.length !== 1 ? 's' : ''}`)
+    } catch (e) {
+      showToast(e.message, 'error')
+    } finally {
+      setSubiendoImagenes(false)
+    }
+  }
+
+  function handleEliminarImagen(imagenId) {
+    setConfirmDlg({
+      title: '¿Eliminar esta imagen?',
+      message: 'Esta acción no se puede deshacer.',
+      confirmLabel: 'Eliminar',
+      onConfirm: async () => {
+        setConfirmDlg(null)
+        try {
+          await eliminarImagenArticulo(imagenId)
+          await cargar()
+          showToast('Imagen eliminada')
+        } catch (e) {
+          showToast(e.message, 'error')
+        }
+      }
+    })
+  }
+
   function showToast(message, type = 'success') {
     setToast({ message, type })
   }
@@ -431,6 +469,39 @@ export default function DetalleArticulo() {
               </button>
             )}
           </div>
+        </div>
+
+        {/* Imágenes */}
+        <div className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-700 p-5">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="font-semibold text-gray-800 dark:text-gray-100 flex items-center gap-2">
+              <ImageIcon size={16} className="text-gray-400 dark:text-gray-500" /> Imágenes
+            </h2>
+            <label className="flex items-center gap-1.5 text-sm text-blue-600 hover:text-blue-700 font-medium cursor-pointer">
+              <Plus size={14} /> Añadir
+              <input type="file" accept="image/*" multiple className="hidden" onChange={handleSubirImagenes} disabled={subiendoImagenes} />
+            </label>
+          </div>
+
+          {subiendoImagenes && <Spinner />}
+
+          {!subiendoImagenes && articulo.imagenes.length === 0 ? (
+            <p className="text-sm text-gray-400 dark:text-gray-500 text-center py-4">Sin imágenes todavía</p>
+          ) : (
+            <div className="flex gap-2 overflow-x-auto pb-1">
+              {articulo.imagenes.map(img => (
+                <div key={img.id} className="relative flex-shrink-0 group/img">
+                  <img src={`/api/imagenes-articulos/${img.filename}`} alt={articulo.nombre}
+                    onClick={() => setImagenAmpliada(img)}
+                    className="w-24 h-24 object-cover rounded-xl border border-gray-200 dark:border-gray-700 cursor-pointer" />
+                  <button onClick={() => handleEliminarImagen(img.id)}
+                    className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-red-500 hover:bg-red-600 text-white flex items-center justify-center opacity-0 group-hover/img:opacity-100 transition-opacity">
+                    <X size={11} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
 
         {/* Ubicaciones */}
@@ -1014,6 +1085,19 @@ export default function DetalleArticulo() {
       <datalist id="dl-marcas">{sugerencias.marcas.map(n => <option key={n} value={n} />)}</datalist>
       <datalist id="dl-referencias">{sugerencias.referencias.map(n => <option key={n} value={n} />)}</datalist>
       <datalist id="dl-ubicaciones">{sugerencias.ubicaciones.map(n => <option key={n} value={n} />)}</datalist>
+
+      {/* Visor de imagen a pantalla completa */}
+      {imagenAmpliada && (
+        <div className="fixed inset-0 z-50 bg-black/90 flex items-center justify-center p-4"
+          onClick={() => setImagenAmpliada(null)}>
+          <img src={`/api/imagenes-articulos/${imagenAmpliada.filename}`} alt={articulo.nombre}
+            className="max-w-full max-h-full rounded-lg object-contain" />
+          <button onClick={() => setImagenAmpliada(null)}
+            className="absolute top-4 right-4 p-2 rounded-full bg-white/10 hover:bg-white/20 text-white transition-colors">
+            <X size={22} />
+          </button>
+        </div>
+      )}
 
       {toast && <Toast {...toast} onClose={() => setToast(null)} />}
 
