@@ -1,10 +1,11 @@
 import {
-  X, AlertCircle, CheckCircle, Sun, Moon,
+  X, AlertCircle, CheckCircle, Sun, Moon, Upload,
   Package, Boxes, Archive, Wrench, Cpu, Zap, Shield, Layers,
   Folder, Truck, Settings, Hammer, CircuitBoard, Cable, Battery,
   FlaskConical, Building2, Car, Star, Bookmark, Gauge, Cog, HardHat
 } from 'lucide-react'
 import { useState, useEffect } from 'react'
+import { subirIcono, eliminarIcono } from '../utils/api'
 
 // ── Modal base ──────────────────────────────────────────────
 export function Modal({ title, onClose, children, size = 'md' }) {
@@ -114,7 +115,15 @@ export function Button({ variant = 'primary', size = 'md', children, className =
 }
 
 // ── Badge ────────────────────────────────────────────────────
-export function Badge({ children, color = 'gray' }) {
+export function Badge({ children, color = 'gray', hex }) {
+  if (hex) {
+    return (
+      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium"
+        style={{ backgroundColor: hex + '20', color: hex }}>
+        {children}
+      </span>
+    )
+  }
   const colors = {
     gray: 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300',
     blue: 'bg-blue-100 text-blue-700 dark:bg-blue-900/50 dark:text-blue-300',
@@ -222,6 +231,8 @@ export function ProyectoIcon({ icono, color, size = 22 }) {
 // ── IconPicker ───────────────────────────────────────────────
 export function IconPicker({ value, onChange, color = '#3B82F6' }) {
   const [customIconos, setCustomIconos] = useState([])
+  const [subiendo, setSubiendo] = useState(false)
+  const [errorSubida, setErrorSubida] = useState('')
 
   useEffect(() => {
     fetch('/api/iconos')
@@ -229,6 +240,35 @@ export function IconPicker({ value, onChange, color = '#3B82F6' }) {
       .then(data => setCustomIconos(data))
       .catch(() => {})
   }, [])
+
+  async function handleSubir(e) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    e.target.value = ''
+    setErrorSubida('')
+    setSubiendo(true)
+    try {
+      const { filename } = await subirIcono(file)
+      setCustomIconos(cs => [...new Set([...cs, filename])].sort())
+      onChange(`custom:${filename}`)
+    } catch (err) {
+      setErrorSubida(err.message)
+    } finally {
+      setSubiendo(false)
+    }
+  }
+
+  async function handleEliminarIcono(e, filename) {
+    e.stopPropagation()
+    if (!window.confirm(`¿Eliminar el icono "${filename}"? Los proyectos que lo usen se quedarán sin icono.`)) return
+    try {
+      await eliminarIcono(filename)
+      setCustomIconos(cs => cs.filter(f => f !== filename))
+      if (value === `custom:${filename}`) onChange('Package')
+    } catch (err) {
+      setErrorSubida(err.message)
+    }
+  }
 
   const selectedStyle = (active) => active ? { backgroundColor: color + '30', color } : {}
 
@@ -256,15 +296,14 @@ export function IconPicker({ value, onChange, color = '#3B82F6' }) {
         </div>
       </div>
 
-      {customIconos.length > 0 && (
-        <div>
-          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Iconos personalizados</label>
-          <div className="flex flex-wrap gap-1.5">
-            {customIconos.map(filename => {
-              const key = `custom:${filename}`
-              return (
+      <div>
+        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Iconos personalizados</label>
+        <div className="flex flex-wrap gap-1.5 items-center">
+          {customIconos.map(filename => {
+            const key = `custom:${filename}`
+            return (
+              <div key={key} className="relative group/icono">
                 <button
-                  key={key}
                   type="button"
                   title={filename.replace('.svg', '')}
                   onClick={() => onChange(key)}
@@ -288,11 +327,32 @@ export function IconPicker({ value, onChange, color = '#3B82F6' }) {
                     maskPosition: 'center',
                   }} />
                 </button>
-              )
-            })}
-          </div>
+                <button
+                  type="button"
+                  title="Eliminar icono"
+                  onClick={e => handleEliminarIcono(e, filename)}
+                  className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-red-500 hover:bg-red-600 text-white flex items-center justify-center opacity-0 group-hover/icono:opacity-100 transition-opacity"
+                >
+                  <X size={10} />
+                </button>
+              </div>
+            )
+          })}
+          <label
+            title="Subir imagen"
+            className={`w-9 h-9 rounded-lg flex items-center justify-center transition-all bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700 ${subiendo ? 'opacity-50 cursor-wait' : 'cursor-pointer'}`}
+          >
+            {subiendo
+              ? <span className="w-3.5 h-3.5 border-2 border-gray-400 border-t-transparent rounded-full animate-spin" />
+              : <Upload size={15} />}
+            <input type="file" accept="image/*,.svg" className="hidden" disabled={subiendo} onChange={handleSubir} />
+          </label>
         </div>
-      )}
+        <p className="text-xs text-gray-400 dark:text-gray-500 mt-1.5">
+          Sube una imagen (PNG, JPG, WEBP o SVG, máx. 5 MB): se ajustará automáticamente a icono cuadrado.
+        </p>
+        {errorSubida && <p className="text-xs text-red-500 mt-1">{errorSubida}</p>}
+      </div>
     </div>
   )
 }

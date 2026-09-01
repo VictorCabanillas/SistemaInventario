@@ -6,10 +6,23 @@
   body {
     @apply antialiased;
     -webkit-tap-highlight-color: transparent;
+    overflow-x: hidden;
   }
 
   * {
     -webkit-font-smoothing: antialiased;
+  }
+
+  /* Oculta las flechas de subir/bajar de los inputs numéricos: en pantalla
+     táctil son un objetivo diminuto y un toque accidental suma/resta
+     "step" al valor sin que se note. */
+  input[type="number"]::-webkit-outer-spin-button,
+  input[type="number"]::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+  input[type="number"] {
+    -moz-appearance: textfield;
   }
 }
 

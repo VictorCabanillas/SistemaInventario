@@ -113,6 +113,39 @@ docker compose build
 docker compose up -d
 ```
 
+Actualizar el contenedor tras cambios en el código
+
+1. Trae el código nuevo a la Raspberry Pi (en la ruta donde clonaste el repo):
+
+```bash
+cd /ruta/al/repo
+git pull
+```
+
+2. Reconstruye las imágenes y recrea los contenedores en un solo paso:
+
+```bash
+docker compose up -d --build
+```
+
+- Esto reconstruye `backend` y `frontend` solo si sus archivos cambiaron (Docker cachea las capas que no cambian) y reinicia los contenedores con la imagen nueva.
+- Para actualizar un único servicio (por ejemplo, si solo tocaste el backend): `docker compose up -d --build backend`.
+- Equivale a hacer `docker compose build` seguido de `docker compose up -d` por separado, si prefieres verlo en dos pasos.
+
+3. Comprueba que arrancó bien:
+
+```bash
+docker compose logs -f backend
+```
+
+Busca la línea `Base de datos inicializada en /data/inventario.db` (o el mensaje de migración de esquema, si la versión nueva añadió columnas/tablas) sin errores.
+
+Notas
+- La base de datos (`./data`), los iconos personalizados (`./backend/iconos`) y los backups (`./backups`) están montados como volúmenes: sobreviven a la reconstrucción de las imágenes, no hace falta ninguna acción manual para conservarlos.
+- Las migraciones de esquema (cambios en la estructura de la base de datos) se aplican solas al arrancar el backend — son idempotentes, así que reiniciar varias veces no duplica ni rompe nada.
+- Antes de una actualización grande, conviene descargar un backup desde la propia app (Configuración → Descargar backup) o copiar `./data/inventario.db` a mano, por si hay que volver atrás.
+- Para revertir: `git checkout <commit-o-tag-anterior>` y repetir `docker compose up -d --build`.
+
 Volúmenes relevantes (docker-compose.yml)
 - `./data/inventario.db:/data/inventario.db` — garantiza que la base de datos SQLite se persiste en el host.
 - `./backups:/backups` — directorio de backups (opcionalmente sustituible por un montaje a un NAS sobre el host).

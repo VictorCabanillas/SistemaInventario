@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { Plus, ArrowLeft, AlertTriangle, Package, Search, X, Download, Filter, MoreVertical, Edit2, Trash2, Sliders, ArrowUpDown } from 'lucide-react'
-import { getArticulos, getProyectos, getCategorias, getSalas, getOperadores, createArticulo, exportarExcel, updateProyecto, deleteProyecto, createMovimientosBulk } from '../utils/api'
+import { Plus, ArrowLeft, AlertTriangle, Package, Search, X, Download, Upload, Filter, MoreVertical, Edit2, Trash2, Sliders, ArrowUpDown } from 'lucide-react'
+import { getArticulos, getArticulosGlobal, getProyectos, getCategorias, getSalas, getOperadores, createArticulo, exportarExcel, updateProyecto, deleteProyecto, createMovimientosBulk, getStockProyecto, getStockGlobal, getSugerencias } from '../utils/api'
 import { Spinner, EmptyState, Toast, Badge, Modal, Input, Select, Button, ProyectoIcon, ColorPicker, IconPicker, DarkModeToggle, ConfirmDialog } from '../components/ui'
+import ImportarExcelModal from '../components/ImportarExcelModal'
 import { useDarkMode } from '../hooks/useDarkMode'
 
 export default function Articulos() {
@@ -11,44 +12,53 @@ export default function Articulos() {
   const [dark, toggleDark] = useDarkMode()
   const [articulos, setArticulos] = useState([])
   const [proyecto, setProyecto] = useState(null)
+  const [proyectosLista, setProyectosLista] = useState([])
   const [categorias, setCategorias] = useState([])
   const [salas, setSalas] = useState([])
   const [operadores, setOperadores] = useState([])
+  const [sugerencias, setSugerencias] = useState({ nombres: [], marcas: [], referencias: [], ubicaciones: [] })
   const [loading, setLoading] = useState(true)
   const [filtro, setFiltro] = useState('')
   const [filtroCat, setFiltroCat] = useState('')
+  const [filtroSala, setFiltroSala] = useState('')
   const [showFiltros, setShowFiltros] = useState(false)
   const [ordenar, setOrdenar] = useState('nombre_asc')
   const [showModal, setShowModal] = useState(false)
   const [showMenuProyecto, setShowMenuProyecto] = useState(false)
   const [showEditProyecto, setShowEditProyecto] = useState(false)
   const [showBulkModal, setShowBulkModal] = useState(false)
+  const [showImportModal, setShowImportModal] = useState(false)
   const [formProyecto, setFormProyecto] = useState({ nombre: '', descripcion: '', color: '#3B82F6', icono: 'Package' })
   const [toast, setToast] = useState(null)
   const [confirmDlg, setConfirmDlg] = useState(null)
-  const [form, setForm] = useState({ nombre: '', categoria_id: '', sala_id: '', cantidad: '', unidad: 'ud', ubicacion: '', stock_minimo: '', notas: '' })
+  const [form, setForm] = useState({ nombre: '', marca: '', referencia: '', proyecto_id: '', categoria_id: '', sala_id: '', cantidad: '', unidad: 'ud', ubicacion: '', stock_minimo: '', notas: '' })
   const [errors, setErrors] = useState({})
   const [bulkItems, setBulkItems] = useState([])
   const [bulkOperador, setBulkOperador] = useState('')
   const [bulkMotivo, setBulkMotivo] = useState('')
   const [bulkErrors, setBulkErrors] = useState({})
 
-  useEffect(() => { cargar() }, [proyectoId])
+  useEffect(() => { cargar() }, [proyectoId, filtroSala]) // eslint-disable-line react-hooks/exhaustive-deps
 
   async function cargar() {
     try {
-      const [arts, proyects, cats, sls, ops] = await Promise.all([
-        getArticulos(proyectoId),
+      const [proyects, cats, sls, ops, sug] = await Promise.all([
         getProyectos(),
         getCategorias(),
         getSalas(),
-        getOperadores()
+        getOperadores(),
+        getSugerencias(),
       ])
+      const proyectoActual = proyects.find(p => p.id === parseInt(proyectoId))
+      const salaId = filtroSala || undefined
+      const arts = proyectoActual?.es_almacen ? await getArticulosGlobal(salaId) : await getArticulos(proyectoId, salaId)
       setArticulos(arts)
-      setProyecto(proyects.find(p => p.id === parseInt(proyectoId)))
+      setProyecto(proyectoActual)
+      setProyectosLista(proyects)
       setCategorias(cats)
       setSalas(sls)
       setOperadores(ops)
+      setSugerencias(sug)
     } catch {
       showToast('Error al cargar', 'error')
     } finally {
@@ -56,10 +66,14 @@ export default function Articulos() {
     }
   }
 
+  const esAlmacen = !!proyecto?.es_almacen
+
   const articulosFiltrados = (() => {
     const list = articulos.filter(a => {
       const matchNombre = a.nombre.toLowerCase().includes(filtro.toLowerCase()) ||
-        (a.ubicacion || '').toLowerCase().includes(filtro.toLowerCase())
+        (a.ubicacion || '').toLowerCase().includes(filtro.toLowerCase()) ||
+        (a.marca || '').toLowerCase().includes(filtro.toLowerCase()) ||
+        (a.referencia || '').toLowerCase().includes(filtro.toLowerCase())
       const matchCat = !filtroCat || a.categoria_id === parseInt(filtroCat)
       return matchNombre && matchCat
     })
@@ -68,6 +82,12 @@ export default function Articulos() {
       case 'cantidad_asc': list.sort((a, b) => a.cantidad - b.cantidad); break
       case 'cantidad_desc': list.sort((a, b) => b.cantidad - a.cantidad); break
       case 'alertas': list.sort((a, b) => (b.bajo_minimo ? 1 : 0) - (a.bajo_minimo ? 1 : 0)); break
+      case 'actualizado_desc': list.sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at)); break
+      case 'actualizado_asc': list.sort((a, b) => new Date(a.updated_at) - new Date(b.updated_at)); break
+      case 'creado_desc': list.sort((a, b) => new Date(b.created_at) - new Date(a.created_at)); break
+      case 'proyecto': list.sort((a, b) => a.proyecto_nombre.localeCompare(b.proyecto_nombre) || a.nombre.localeCompare(b.nombre)); break
+      case 'ubicacion': list.sort((a, b) => (a.ubicacion || '￿').localeCompare(b.ubicacion || '￿')); break
+      case 'sin_ubicacion': list.sort((a, b) => (b.sin_ubicacion ? 1 : 0) - (a.sin_ubicacion ? 1 : 0)); break
       default: list.sort((a, b) => a.nombre.localeCompare(b.nombre)); break
     }
     return list
@@ -82,9 +102,11 @@ export default function Articulos() {
     if (Object.keys(errs).length) { setErrors(errs); return }
 
     try {
-      const nuevo = await createArticulo({
-        proyecto_id: parseInt(proyectoId),
+      await createArticulo({
+        proyecto_id: form.proyecto_id ? parseInt(form.proyecto_id) : parseInt(proyectoId),
         nombre: form.nombre,
+        marca: form.marca || '',
+        referencia: form.referencia || '',
         categoria_id: form.categoria_id ? parseInt(form.categoria_id) : null,
         sala_id: form.sala_id ? parseInt(form.sala_id) : null,
         cantidad: parseFloat(form.cantidad),
@@ -93,7 +115,10 @@ export default function Articulos() {
         stock_minimo: form.stock_minimo ? parseFloat(form.stock_minimo) : null,
         notas: form.notas || null,
       })
-      setArticulos(as => [...as, nuevo])
+      // Refetch (no append optimista): si el artículo ya existía en el catálogo
+      // (misma marca+referencia), esto suma cantidad a una fila existente en vez
+      // de crear una nueva.
+      await cargar()
       setShowModal(false)
       showToast('Artículo creado')
     } catch (e) {
@@ -151,12 +176,18 @@ export default function Articulos() {
     }
   }
 
-  function abrirBulk() {
-    setBulkItems(articulos.map(a => ({ ...a, nuevaCantidad: '' })))
-    setBulkOperador('')
-    setBulkMotivo('')
-    setBulkErrors({})
-    setShowBulkModal(true)
+
+  async function abrirBulk() {
+    try {
+      const lineas = esAlmacen ? await getStockGlobal() : await getStockProyecto(proyectoId)
+      setBulkItems(lineas.map(l => ({ ...l, nuevaCantidad: '' })))
+      setBulkOperador('')
+      setBulkMotivo('')
+      setBulkErrors({})
+      setShowBulkModal(true)
+    } catch {
+      showToast('Error al cargar el stock', 'error')
+    }
   }
 
   async function handleBulkGuardar() {
@@ -168,7 +199,7 @@ export default function Articulos() {
       .map(a => {
         const nueva = parseFloat(a.nuevaCantidad)
         return {
-          articulo_id: a.id,
+          stock_id: a.stock_id,
           tipo: nueva > a.cantidad ? 'entrada' : 'salida',
           cantidad: Math.abs(nueva - a.cantidad),
           operador: bulkOperador,
@@ -194,12 +225,12 @@ export default function Articulos() {
   }
 
   function abrirCrear() {
-    setForm({ nombre: '', categoria_id: '', sala_id: '', cantidad: '0', unidad: 'ud', ubicacion: '', stock_minimo: '', notas: '' })
+    setForm({ nombre: '', marca: '', referencia: '', proyecto_id: proyectoId, categoria_id: '', sala_id: '', cantidad: '0', unidad: 'ud', ubicacion: '', stock_minimo: '', notas: '' })
     setErrors({})
     setShowModal(true)
   }
 
-  const hayFiltrosActivos = filtroCat || ordenar !== 'nombre_asc'
+  const hayFiltrosActivos = filtroCat || filtroSala || ordenar !== 'nombre_asc'
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-950">
@@ -251,11 +282,19 @@ export default function Articulos() {
                         className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700">
                         <Download size={14} /> Descargar Excel
                       </button>
-                      <div className="my-1 border-t border-gray-100 dark:border-gray-700" />
-                      <button onClick={handleEliminarProyecto}
-                        className="w-full flex items-center gap-2 px-3 py-2 text-sm text-red-600 hover:bg-red-50 dark:hover:bg-red-950">
-                        <Trash2 size={14} /> Eliminar proyecto
+                      <button onClick={() => { setShowMenuProyecto(false); setShowImportModal(true) }}
+                        className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700">
+                        <Upload size={14} /> Importar Excel
                       </button>
+                      {!proyecto.es_almacen && (
+                        <>
+                          <div className="my-1 border-t border-gray-100 dark:border-gray-700" />
+                          <button onClick={handleEliminarProyecto}
+                            className="w-full flex items-center gap-2 px-3 py-2 text-sm text-red-600 hover:bg-red-50 dark:hover:bg-red-950">
+                            <Trash2 size={14} /> Eliminar proyecto
+                          </button>
+                        </>
+                      )}
                     </div>
                   )}
                 </div>
@@ -287,19 +326,32 @@ export default function Articulos() {
           </div>
 
           {showFiltros && (
-            <div className="mt-2 flex gap-2">
-              <select value={filtroCat} onChange={e => setFiltroCat(e.target.value)}
-                className="flex-1 px-3 py-2 rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 dark:text-gray-100 text-sm outline-none">
-                <option value="">Todas las categorías</option>
-                {categorias.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
-              </select>
+            <div className="mt-2 space-y-2">
+              <div className="flex gap-2">
+                <select value={filtroCat} onChange={e => setFiltroCat(e.target.value)}
+                  className="flex-1 min-w-0 px-3 py-2 rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 dark:text-gray-100 text-sm outline-none">
+                  <option value="">Todas las categorías</option>
+                  {categorias.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+                </select>
+                <select value={filtroSala} onChange={e => setFiltroSala(e.target.value)}
+                  className="flex-1 min-w-0 px-3 py-2 rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 dark:text-gray-100 text-sm outline-none">
+                  <option value="">Todas las salas</option>
+                  {salas.map(s => <option key={s.id} value={s.id}>{s.nombre}</option>)}
+                </select>
+              </div>
               <select value={ordenar} onChange={e => setOrdenar(e.target.value)}
-                className="flex-1 px-3 py-2 rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 dark:text-gray-100 text-sm outline-none">
+                className="w-full px-3 py-2 rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 dark:text-gray-100 text-sm outline-none">
                 <option value="nombre_asc">Nombre A-Z</option>
                 <option value="nombre_desc">Nombre Z-A</option>
                 <option value="cantidad_asc">Cantidad ↑</option>
                 <option value="cantidad_desc">Cantidad ↓</option>
                 <option value="alertas">Alertas primero</option>
+                <option value="actualizado_desc">Modificado más reciente</option>
+                <option value="actualizado_asc">Modificado menos reciente</option>
+                <option value="creado_desc">Creado más reciente</option>
+                <option value="sin_ubicacion">Sin ubicación primero</option>
+                <option value="ubicacion">Ubicación A-Z</option>
+                {esAlmacen && <option value="proyecto">Proyecto</option>}
               </select>
             </div>
           )}
@@ -316,8 +368,8 @@ export default function Articulos() {
         ) : (
           <div className="space-y-2">
             {articulosFiltrados.map(art => (
-              <div key={art.id}
-                onClick={() => navigate(`/proyectos/${proyectoId}/articulos/${art.id}`)}
+              <div key={`${art.id}-${art.proyecto_id}`}
+                onClick={() => navigate(`/proyectos/${art.proyecto_id}/articulos/${art.id}`)}
                 className={`rounded-xl border p-4 cursor-pointer hover:shadow-sm transition-all flex items-center gap-4
                   ${art.bajo_minimo
                     ? 'border-red-200 dark:border-red-800 bg-red-50/30 dark:bg-red-950/30'
@@ -329,9 +381,19 @@ export default function Articulos() {
                     <span className="font-medium text-gray-800 dark:text-gray-100 text-sm truncate">{art.nombre}</span>
                     {art.bajo_minimo && <AlertTriangle size={13} className="text-red-500 flex-shrink-0" />}
                   </div>
+                  {(art.marca || art.referencia) && (
+                    <p className="text-xs text-gray-400 dark:text-gray-500 truncate">
+                      {[art.marca, art.referencia].filter(Boolean).join(' · ')}
+                    </p>
+                  )}
                   <div className="flex items-center gap-2 flex-wrap">
+                    {esAlmacen && art.proyecto_nombre && <Badge hex={art.proyecto_color}>{art.proyecto_nombre}</Badge>}
                     {art.categoria_nombre && <Badge>{art.categoria_nombre}</Badge>}
-                    {(art.sala_nombre || art.ubicacion) && (
+                    {art.num_ubicaciones > 1 ? (
+                      <Badge>{art.num_ubicaciones} ubicaciones</Badge>
+                    ) : art.sin_ubicacion ? (
+                      <span className="text-xs text-amber-500 dark:text-amber-400">Sin ubicación</span>
+                    ) : (
                       <span className="text-xs text-gray-400 dark:text-gray-500">
                         📍 {[art.sala_nombre, art.ubicacion].filter(Boolean).join(' · ')}
                       </span>
@@ -364,8 +426,27 @@ export default function Articulos() {
       {showModal && (
         <Modal title="Nuevo artículo" onClose={() => setShowModal(false)} size="lg">
           <div className="space-y-4">
-            <Input label="Nombre *" value={form.nombre} error={errors.nombre}
+            <Input label="Nombre *" value={form.nombre} error={errors.nombre} list="dl-nombres"
               onChange={e => setForm(f => ({ ...f, nombre: e.target.value }))} placeholder="Nombre del artículo" />
+
+            {esAlmacen && (
+              <Select label="Proyecto *" value={form.proyecto_id}
+                onChange={e => setForm(f => ({ ...f, proyecto_id: e.target.value }))}>
+                {proyectosLista.map(p => <option key={p.id} value={p.id}>{p.nombre}</option>)}
+              </Select>
+            )}
+
+            <div className="grid grid-cols-2 gap-3">
+              <Input label="Marca" value={form.marca} list="dl-marcas"
+                onChange={e => setForm(f => ({ ...f, marca: e.target.value }))} placeholder="Ej: Bosch" />
+              <Input label="Referencia" value={form.referencia} list="dl-referencias"
+                onChange={e => setForm(f => ({ ...f, referencia: e.target.value }))} placeholder="Ej: GSR-120" />
+            </div>
+            <p className="text-xs text-gray-400 dark:text-gray-500 -mt-2">
+              Nombre + marca + referencia identifican el artículo en el catálogo. Si ya existe y además coincide
+              la ubicación (Armario/Balda) en {esAlmacen ? 'el proyecto seleccionado' : 'este proyecto'}, se sumará
+              la cantidad a esa ubicación; si la ubicación es distinta, se creará como una ubicación nueva.
+            </p>
 
             <Select label="Categoría" value={form.categoria_id}
               onChange={e => setForm(f => ({ ...f, categoria_id: e.target.value }))}>
@@ -387,9 +468,14 @@ export default function Articulos() {
                 <option value="">Sin sala</option>
                 {salas.map(s => <option key={s.id} value={s.id}>{s.nombre}</option>)}
               </Select>
-              <Input label="Armario / Balda" value={form.ubicacion}
+              <Input label="Armario / Balda" value={form.ubicacion} list="dl-ubicaciones"
                 onChange={e => setForm(f => ({ ...f, ubicacion: e.target.value }))} placeholder="Ej: B/2" />
             </div>
+
+            <datalist id="dl-nombres">{sugerencias.nombres.map(n => <option key={n} value={n} />)}</datalist>
+            <datalist id="dl-marcas">{sugerencias.marcas.map(n => <option key={n} value={n} />)}</datalist>
+            <datalist id="dl-referencias">{sugerencias.referencias.map(n => <option key={n} value={n} />)}</datalist>
+            <datalist id="dl-ubicaciones">{sugerencias.ubicaciones.map(n => <option key={n} value={n} />)}</datalist>
 
             <Input label="Stock mínimo (opcional)" type="number" min="0" step="0.01"
               value={form.stock_minimo}
@@ -442,9 +528,13 @@ export default function Articulos() {
 
             <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
               {bulkItems.map((art, i) => (
-                <div key={art.id} className="flex items-center gap-3 py-2 border-b border-gray-100 dark:border-gray-800 last:border-0">
+                <div key={art.stock_id} className="flex items-center gap-3 py-2 border-b border-gray-100 dark:border-gray-800 last:border-0">
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-gray-800 dark:text-gray-100 truncate">{art.nombre}</p>
+                    <p className="text-sm font-medium text-gray-800 dark:text-gray-100 truncate">
+                      {art.nombre}
+                      {esAlmacen && art.proyecto_nombre && <span className="text-gray-400 dark:text-gray-500 font-normal"> · {art.proyecto_nombre}</span>}
+                      {art.ubicacion && <span className="text-gray-400 dark:text-gray-500 font-normal"> · {art.ubicacion}</span>}
+                    </p>
                     <p className="text-xs text-gray-400 dark:text-gray-500">Actual: {art.cantidad} {art.unidad}</p>
                   </div>
                   <div className="flex items-center gap-2 flex-shrink-0">
@@ -483,6 +573,17 @@ export default function Articulos() {
             </div>
           </div>
         </Modal>
+      )}
+
+      {/* Modal importar Excel */}
+      {showImportModal && (
+        <ImportarExcelModal
+          proyectoId={proyectoId}
+          nombreProyecto={proyecto?.nombre}
+          onClose={() => setShowImportModal(false)}
+          onImportado={cargar}
+          showToast={showToast}
+        />
       )}
 
       {toast && <Toast {...toast} onClose={() => setToast(null)} />}
