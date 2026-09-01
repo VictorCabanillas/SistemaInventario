@@ -94,25 +94,30 @@ def _crear_o_sumar_articulo(db, *, nombre, marca, referencia, categoria_id, unid
     return articulo_id, stock_id
 
 
-def _restar_stock(db, stock_id, cantidad):
-    """Resta `cantidad` de una fila de stock; si queda en ~0, borra la fila
-    en vez de dejar una fila fantasma con cantidad 0.
+def _restar_stock(db, stock_id, cantidad, borrar_si_vacio=False):
+    """Resta `cantidad` de una fila de stock.
 
-    Importante: NO borra el artículo de catálogo aunque quede sin stock en
-    ningún sitio. Eso solo debe pasar cuando el usuario borra el artículo
-    explícitamente (endpoints de eliminar) — hacerlo aquí, en una operación
-    rutinaria (retirar/baja/reparación/transferencia), causaba dos problemas:
-    perder en silencio la categoría/notas/mínimo/historial del artículo al
-    vaciar su último stock, y un IntegrityError si después se inserta un
-    movimiento referenciando ese articulo_id ya borrado (el propio historial
-    de movimientos tiene ON DELETE CASCADE hacia articulos)."""
+    Por defecto la fila (y su artículo de catálogo) se conservan aunque quede
+    a 0: si se borrara, el artículo desaparecería de los listados de su
+    proyecto (que solo muestran filas con stock existente) y ya no se podría
+    reponer stock desde ahí — solo recreándolo a mano con el nombre exacto.
+    Queda visible con cantidad 0 para poder rellenarlo con "Añadir" en su
+    ubicación de siempre. Borrar la fila (o el artículo) por lo demás solo
+    debe pasar por una acción explícita del usuario (endpoints de eliminar).
+
+    `borrar_si_vacio=True` es la única excepción: se usa al reparar (mover
+    cantidad de una fila 'baja' de vuelta a 'ok'), donde una fila de baja que
+    se queda en 0 ya no representa nada roto — a diferencia del stock 'ok',
+    no hay ningún caso de uso de "rellenar" una fila de baja vacía; si algo
+    se rompe otra vez, se crea (o reutiliza) su propia fila."""
     db.execute(
         "UPDATE stock SET cantidad = cantidad - ?, updated_at=datetime('now') WHERE id=?",
         (cantidad, stock_id)
     )
-    row = db.execute("SELECT cantidad FROM stock WHERE id=?", (stock_id,)).fetchone()
-    if row and abs(row["cantidad"]) < 1e-9:
-        db.execute("DELETE FROM stock WHERE id=?", (stock_id,))
+    if borrar_si_vacio:
+        row = db.execute("SELECT cantidad FROM stock WHERE id=?", (stock_id,)).fetchone()
+        if row and abs(row["cantidad"]) < 1e-9:
+            db.execute("DELETE FROM stock WHERE id=?", (stock_id,))
 
 
 # ─────────────────────────────────────────
@@ -801,7 +806,7 @@ def create_movimiento(data: MovimientoCreate):
             if data.sala_destino_id is not None:
                 db.execute("UPDATE stock SET sala_id=? WHERE id=?", (data.sala_destino_id, destino_id))
 
-            _restar_stock(db, origen["id"], data.cantidad)
+            _restar_stock(db, origen["id"], data.cantidad, borrar_si_vacio=(data.tipo == "reparacion"))
             db.execute(
                 "UPDATE stock SET cantidad = cantidad + ?, updated_at=datetime('now') WHERE id=?",
                 (data.cantidad, destino_id)
@@ -970,12 +975,8 @@ def create_movimientos_bulk(movimientos: List[MovimientoCreate]):
                 "INSERT INTO movimientos (articulo_id, tipo, cantidad, motivo, operador, proyecto_id) VALUES (?,?,?,?,?,?)",
                 (stock["articulo_id"], data.tipo, data.cantidad, data.motivo, data.operador, stock["proyecto_id"])
             )
-            if abs(nueva) < 1e-9:
-                # Solo se borra la fila de stock vacía; el artículo de catálogo
-                # se conserva (ver nota en _restar_stock).
-                db.execute("DELETE FROM stock WHERE id=?", (data.stock_id,))
-            else:
-                db.execute("UPDATE stock SET cantidad=?, updated_at=datetime('now') WHERE id=?", (nueva, data.stock_id))
+            # La fila se conserva aunque quede a 0 (ver nota en _restar_stock).
+            db.execute("UPDATE stock SET cantidad=?, updated_at=datetime('now') WHERE id=?", (nueva, data.stock_id))
         db.commit()
     finally:
         db.close()
