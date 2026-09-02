@@ -1113,11 +1113,16 @@ async def restore_db(file: UploadFile = File(...)):
         tmp_path = tmp.name
     try:
         shutil.move(tmp_path, DB_PATH)
+        # El backup puede ser de una versión anterior del esquema (le pueden
+        # faltar tablas/columnas añadidas después, p.ej. articulo_imagenes).
+        # init_db() es idempotente: si ya está al día no hace nada, y si no,
+        # aplica las migraciones que falten sobre el archivo recién restaurado.
+        init_db()
     except Exception as e:
         if os.path.exists(tmp_path):
             os.unlink(tmp_path)
         raise HTTPException(500, f"Error al restaurar: {e}")
-    return {"message": "Base de datos restaurada. Recarga la aplicación."}
+    return {"message": "Base de datos restaurada y actualizada al esquema actual. Recarga la aplicación."}
 
 
 # ─────────────────────────────────────────
