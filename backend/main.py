@@ -19,7 +19,7 @@ from schemas import (
     Operador, OperadorCreate,
     Proyecto, ProyectoCreate, ProyectoUpdate,
     Articulo, ArticuloCreate, ArticuloUpdate, StockUpdate,
-    ArticuloDetalle, StockPorProyecto, StockLinea,
+    ArticuloDetalle, StockPorProyecto, StockLinea, ArticuloImagen,
     Movimiento, MovimientoCreate,
     ResultadoBusqueda, Sugerencias, CatalogoItem, FusionArticulos
 )
@@ -115,9 +115,10 @@ def _restar_stock(db, stock_id, cantidad, borrar_si_vacio=False):
         (cantidad, stock_id)
     )
     if borrar_si_vacio:
-        row = db.execute("SELECT cantidad FROM stock WHERE id=?", (stock_id,)).fetchone()
+        row = db.execute("SELECT articulo_id, cantidad FROM stock WHERE id=?", (stock_id,)).fetchone()
         if row and abs(row["cantidad"]) < 1e-9:
             db.execute("DELETE FROM stock WHERE id=?", (stock_id,))
+            _borrar_articulo_si_huerfano(db, row["articulo_id"])
 
 
 # ─────────────────────────────────────────
@@ -170,13 +171,17 @@ def _slugify(nombre: str) -> str:
     return base or "icono"
 
 
-def _nombre_disponible(base: str, ext: str) -> str:
+def _nombre_disponible_en(directorio: str, base: str, ext: str) -> str:
     nombre = f"{base}{ext}"
     i = 2
-    while os.path.exists(os.path.join(ICONOS_DIR, nombre)):
+    while os.path.exists(os.path.join(directorio, nombre)):
         nombre = f"{base}-{i}{ext}"
         i += 1
     return nombre
+
+
+def _nombre_disponible(base: str, ext: str) -> str:
+    return _nombre_disponible_en(ICONOS_DIR, base, ext)
 
 
 @app.post("/api/iconos", status_code=201)
@@ -225,6 +230,103 @@ async def subir_icono(file: UploadFile = File(...)):
     filename = _nombre_disponible(base, ".png")
     lienzo.save(os.path.join(ICONOS_DIR, filename), "PNG")
     return {"filename": filename}
+
+
+# ─────────────────────────────────────────
+# IMÁGENES DE ARTÍCULOS
+#
+# Fotos de referencia del artículo (nivel de catálogo: compartidas entre
+# proyectos y ubicaciones, es la misma pieza física). A diferencia de los
+# iconos, no se fuerzan a un lienzo cuadrado con transparencia: son fotos
+# reales, así que solo se limita su tamaño y se recomprimen a JPEG para no
+# acumular archivos pesados en la tarjeta SD.
+# ─────────────────────────────────────────
+
+IMAGENES_DIR = os.path.join(os.path.dirname(__file__), "imagenes_articulos")
+IMAGEN_MAX_UPLOAD_BYTES = 8 * 1024 * 1024  # 8 MB por archivo
+IMAGEN_MAX_DIMENSION = 1600  # px, lado más largo tras el redimensionado
+
+def _borrar_articulo_si_huerfano(db, articulo_id):
+    """Si el artículo ya no tiene stock en ningún proyecto, borra su fila de
+    catálogo. Las imágenes asociadas se limpian primero (el fichero en disco;
+    el registro en BD lo elimina el ON DELETE CASCADE de articulo_imagenes)."""
+    otros = db.execute("SELECT COUNT(*) as n FROM stock WHERE articulo_id=?", (articulo_id,)).fetchone()
+    if otros["n"] > 0:
+        return
+    for img in db.execute("SELECT filename FROM articulo_imagenes WHERE articulo_id=?", (articulo_id,)).fetchall():
+        path = os.path.join(IMAGENES_DIR, img["filename"])
+        if os.path.exists(path):
+            os.remove(path)
+    db.execute("DELETE FROM articulos WHERE id=?", (articulo_id,))
+
+@app.get("/api/imagenes-articulos/{filename}")
+def get_imagen_articulo(filename: str):
+    if "/" in filename or "\\" in filename:
+        raise HTTPException(400, "Nombre de archivo inválido")
+    if not filename.lower().endswith(".jpg"):
+        raise HTTPException(400, "Tipo de archivo no permitido")
+    path = os.path.join(IMAGENES_DIR, filename)
+    if not os.path.exists(path):
+        raise HTTPException(404, "Imagen no encontrada")
+    return FileResponse(path, media_type="image/jpeg")
+
+@app.post("/api/articulos/{articulo_id}/imagenes", status_code=201, response_model=List[ArticuloImagen])
+async def subir_imagenes_articulo(articulo_id: int, files: List[UploadFile] = File(...)):
+    db = get_db()
+    articulo = db.execute("SELECT id FROM articulos WHERE id=?", (articulo_id,)).fetchone()
+    if not articulo:
+        db.close()
+        raise HTTPException(404, "Artículo no encontrado")
+
+    try:
+        from PIL import Image, UnidentifiedImageError
+    except ImportError:
+        db.close()
+        raise HTTPException(500, "Pillow no instalado en el servidor")
+
+    os.makedirs(IMAGENES_DIR, exist_ok=True)
+    creadas = []
+    try:
+        for file in files:
+            content = await file.read()
+            if not content:
+                continue
+            if len(content) > IMAGEN_MAX_UPLOAD_BYTES:
+                raise HTTPException(400, f"'{file.filename}' supera los 8 MB")
+            try:
+                img = Image.open(io.BytesIO(content))
+                img.load()
+            except (UnidentifiedImageError, OSError):
+                raise HTTPException(400, f"'{file.filename}' no es una imagen válida")
+
+            img = img.convert("RGB")
+            img.thumbnail((IMAGEN_MAX_DIMENSION, IMAGEN_MAX_DIMENSION), Image.LANCZOS)
+
+            base = _slugify(os.path.splitext(file.filename or "imagen")[0])
+            filename = _nombre_disponible_en(IMAGENES_DIR, f"art{articulo_id}-{base}", ".jpg")
+            img.save(os.path.join(IMAGENES_DIR, filename), "JPEG", quality=82)
+
+            cur = db.execute(
+                "INSERT INTO articulo_imagenes (articulo_id, filename) VALUES (?,?)",
+                (articulo_id, filename)
+            )
+            creadas.append({"id": cur.lastrowid, "filename": filename})
+        db.commit()
+    finally:
+        db.close()
+    return creadas
+
+@app.delete("/api/imagenes-articulos/{imagen_id}", status_code=204)
+def delete_imagen_articulo(imagen_id: int):
+    db = get_db()
+    row = db.execute("SELECT filename FROM articulo_imagenes WHERE id=?", (imagen_id,)).fetchone()
+    if row:
+        db.execute("DELETE FROM articulo_imagenes WHERE id=?", (imagen_id,))
+        db.commit()
+        path = os.path.join(IMAGENES_DIR, row["filename"])
+        if os.path.exists(path):
+            os.remove(path)
+    db.close()
 
 
 # ─────────────────────────────────────────
@@ -560,6 +662,10 @@ def get_articulo_detalle(proyecto_id: int, articulo_id: int):
         WHERE s.articulo_id = ? AND s.proyecto_id = ?
         ORDER BY s.ubicacion
     """, (articulo_id, proyecto_id)).fetchall()
+    imagenes = db.execute(
+        "SELECT id, filename FROM articulo_imagenes WHERE articulo_id = ? ORDER BY id",
+        (articulo_id,)
+    ).fetchall()
     db.close()
 
     ubicaciones = [dict(f) for f in filas if f["estado"] == "ok"]
@@ -574,6 +680,7 @@ def get_articulo_detalle(proyecto_id: int, articulo_id: int):
         "bajo_minimo": bajo_minimo,
         "ubicaciones": ubicaciones,
         "bajas": bajas,
+        "imagenes": [dict(i) for i in imagenes],
     }
 
 @app.get("/api/articulos/{articulo_id}/stock", response_model=List[StockPorProyecto])
@@ -686,9 +793,7 @@ def delete_articulo(proyecto_id: int, articulo_id: int):
     """Elimina TODAS las ubicaciones de este artículo en este proyecto."""
     db = get_db()
     db.execute("DELETE FROM stock WHERE articulo_id=? AND proyecto_id=?", (articulo_id, proyecto_id))
-    otros = db.execute("SELECT COUNT(*) as n FROM stock WHERE articulo_id=?", (articulo_id,)).fetchone()
-    if otros["n"] == 0:
-        db.execute("DELETE FROM articulos WHERE id=?", (articulo_id,))
+    _borrar_articulo_si_huerfano(db, articulo_id)
     db.commit()
     db.close()
 
@@ -699,9 +804,7 @@ def delete_stock(stock_id: int):
     row = db.execute("SELECT articulo_id FROM stock WHERE id=?", (stock_id,)).fetchone()
     if row:
         db.execute("DELETE FROM stock WHERE id=?", (stock_id,))
-        otros = db.execute("SELECT COUNT(*) as n FROM stock WHERE articulo_id=?", (row["articulo_id"],)).fetchone()
-        if otros["n"] == 0:
-            db.execute("DELETE FROM articulos WHERE id=?", (row["articulo_id"],))
+        _borrar_articulo_si_huerfano(db, row["articulo_id"])
         db.commit()
     db.close()
 
@@ -949,6 +1052,7 @@ def fusionar_articulos(origen_id: int, data: FusionArticulos):
         db.execute("DELETE FROM stock WHERE id=?", (fila["id"],))
 
     db.execute("UPDATE movimientos SET articulo_id=? WHERE articulo_id=?", (data.articulo_destino_id, origen_id))
+    db.execute("UPDATE articulo_imagenes SET articulo_id=? WHERE articulo_id=?", (data.articulo_destino_id, origen_id))
     db.execute("DELETE FROM articulos WHERE id=?", (origen_id,))
     db.commit()
     db.close()

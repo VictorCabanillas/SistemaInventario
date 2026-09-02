@@ -8,6 +8,7 @@ services:
     volumes:
       - ./data:/data
       - ./backend/iconos:/app/backend/iconos
+      - ./backend/imagenes_articulos:/app/backend/imagenes_articulos
       - ./backups:/backups
     ports:
       - "8000:8000"

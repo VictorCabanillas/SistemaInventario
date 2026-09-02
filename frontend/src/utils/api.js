@@ -93,6 +93,19 @@ export const buscarCatalogo = (q, excluirId) =>
 export const fusionarArticulo = (origenId, destinoId) =>
   request(`/articulos/${origenId}/fusionar`, { method: 'POST', body: JSON.stringify({ articulo_destino_id: destinoId }) })
 
+// Imágenes de artículo (nivel de catálogo, varias por artículo)
+export const subirImagenesArticulo = async (articuloId, files) => {
+  const fd = new FormData()
+  for (const f of files) fd.append('files', f)
+  const res = await fetch(`/api/articulos/${articuloId}/imagenes`, { method: 'POST', body: fd })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: 'Error al subir las imágenes' }))
+    throw new Error(err.detail)
+  }
+  return res.json()
+}
+export const eliminarImagenArticulo = (imagenId) => request(`/imagenes-articulos/${imagenId}`, { method: 'DELETE' })
+
 // Alertas de stock bajo mínimo (todos los proyectos)
 export const getAlertas = () => request('/alertas')
 

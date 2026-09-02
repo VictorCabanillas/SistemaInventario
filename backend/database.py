@@ -315,6 +315,14 @@ def init_db():
             FOREIGN KEY (proyecto_origen_id) REFERENCES proyectos(id) ON DELETE SET NULL,
             FOREIGN KEY (proyecto_destino_id) REFERENCES proyectos(id) ON DELETE SET NULL
         );
+
+        CREATE TABLE IF NOT EXISTS articulo_imagenes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            articulo_id INTEGER NOT NULL,
+            filename TEXT NOT NULL,
+            created_at TEXT DEFAULT (datetime('now')),
+            FOREIGN KEY (articulo_id) REFERENCES articulos(id) ON DELETE CASCADE
+        );
     """)
 
     # Migraciones para DBs anteriores a esta versión (columnas añadidas con el tiempo)
