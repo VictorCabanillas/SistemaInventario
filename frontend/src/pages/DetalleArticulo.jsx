@@ -1,9 +1,9 @@
 import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { ArrowLeft, Plus, Minus, Edit2, Trash2, AlertTriangle, Clock, Package, ChevronDown, ChevronUp, ArrowRightLeft, Ban, Wrench, MapPin, Merge, X, Image as ImageIcon } from 'lucide-react'
+import { ArrowLeft, Plus, Minus, Edit2, Trash2, AlertTriangle, Clock, Package, ChevronDown, ChevronUp, ArrowRightLeft, Ban, Wrench, MapPin, Merge, Move, X, Image as ImageIcon } from 'lucide-react'
 import {
   getArticulo, getStockArticulo, updateArticulo, updateStock, deleteArticulo, deleteStock,
-  createMovimiento, createEntrada, createTransferencia, createBaja, createReparacion,
+  createMovimiento, createEntrada, createTransferencia, createTraslado, createBaja, createReparacion,
   getMovimientos, getCategorias, getProyectos, getSalas, getOperadores,
   getSugerencias, buscarCatalogo, fusionarArticulo,
   subirImagenesArticulo, eliminarImagenArticulo
@@ -42,6 +42,9 @@ export default function DetalleArticulo() {
 
   const [formUbicacion, setFormUbicacion] = useState({ stockId: null, ubicacion: '', sala_id: '' })
   const [errorsUbicacion, setErrorsUbicacion] = useState({})
+
+  const [formTrasladar, setFormTrasladar] = useState({ stockId: null, disponible: 0, ubicacionActual: '', destinoModo: 'existente', destinoStockId: '', ubicacionNueva: '', salaNueva: '', cantidad: '', operador: '', motivo: '' })
+  const [errorsTrasladar, setErrorsTrasladar] = useState({})
 
   const [formReparar, setFormReparar] = useState({ stockId: null, disponible: 0, cantidad: '', operador: '', motivo: '', ubicacionDestino: '', salaDestino: '' })
   const [errorsReparar, setErrorsReparar] = useState({})
@@ -244,6 +247,34 @@ export default function DetalleArticulo() {
     }
   }
 
+  async function handleTrasladar() {
+    const errs = {}
+    const cantidad = parseFloat(formTrasladar.cantidad)
+    if (!formTrasladar.cantidad || isNaN(cantidad) || cantidad <= 0) errs.cantidad = 'Introduce una cantidad válida'
+    else if (cantidad > formTrasladar.disponible) errs.cantidad = `Solo hay ${formTrasladar.disponible} ${articulo.unidad} en esta ubicación`
+    if (formTrasladar.destinoModo === 'existente' && !formTrasladar.destinoStockId) errs.destino = 'Selecciona una ubicación de destino'
+    if (!formTrasladar.operador.trim()) errs.operador = 'El nombre es obligatorio'
+    if (Object.keys(errs).length) { setErrorsTrasladar(errs); return }
+
+    const destino = formTrasladar.destinoModo === 'existente'
+      ? articulo.ubicaciones.find(u => String(u.stock_id) === String(formTrasladar.destinoStockId))
+      : null
+
+    try {
+      await createTraslado({
+        stock_id: formTrasladar.stockId, cantidad,
+        operador: formTrasladar.operador, motivo: formTrasladar.motivo || null,
+        ubicacion_destino: destino ? destino.ubicacion : (formTrasladar.ubicacionNueva || null),
+        sala_destino_id: destino ? null : (formTrasladar.salaNueva ? parseInt(formTrasladar.salaNueva) : null),
+      })
+      setModal(null)
+      await cargar()
+      showToast('Unidades trasladadas')
+    } catch (e) {
+      showToast(e.message, 'error')
+    }
+  }
+
   async function handleReparar() {
     const errs = {}
     const cantidad = parseFloat(formReparar.cantidad)
@@ -309,6 +340,19 @@ export default function DetalleArticulo() {
     setFormReparar({ stockId: b.stock_id, disponible: b.cantidad, cantidad: '', operador: '', motivo: '', ubicacionDestino: '', salaDestino: '' })
     setErrorsReparar({})
     setModal('reparar')
+  }
+
+  function abrirTrasladar(u) {
+    const otras = articulo.ubicaciones.filter(x => x.stock_id !== u.stock_id)
+    setFormTrasladar({
+      stockId: u.stock_id, disponible: u.cantidad, ubicacionActual: u.ubicacion || SIN_UBICACION,
+      destinoModo: otras.length > 0 ? 'existente' : 'nueva',
+      destinoStockId: otras.length === 1 ? String(otras[0].stock_id) : '',
+      ubicacionNueva: '', salaNueva: '',
+      cantidad: String(u.cantidad), operador: '', motivo: '',
+    })
+    setErrorsTrasladar({})
+    setModal('trasladar')
   }
 
   function abrirFusionar() {
@@ -522,6 +566,10 @@ export default function DetalleArticulo() {
                   </div>
                   <div className="flex items-center gap-2 flex-shrink-0">
                     <span className="text-sm font-semibold text-gray-800 dark:text-gray-100">{u.cantidad} {articulo.unidad}</span>
+                    <button onClick={() => abrirTrasladar(u)} title="Mover a otra ubicación"
+                      className="p-1.5 rounded-lg opacity-0 group-hover:opacity-100 hover:bg-gray-200 dark:hover:bg-gray-700 transition-all">
+                      <Move size={13} className="text-gray-500 dark:text-gray-400" />
+                    </button>
                     <button onClick={() => abrirEditarUbicacion(u)}
                       className="p-1.5 rounded-lg opacity-0 group-hover:opacity-100 hover:bg-gray-200 dark:hover:bg-gray-700 transition-all">
                       <Edit2 size={13} className="text-gray-500 dark:text-gray-400" />
@@ -626,6 +674,7 @@ export default function DetalleArticulo() {
                 <div className="divide-y divide-gray-50 dark:divide-gray-800">
                   {movimientos.map(mov => {
                     const esTransferencia = mov.tipo === 'transferencia'
+                    const esTraslado = mov.tipo === 'traslado'
                     const saliente = esTransferencia && mov.proyecto_origen_id === parseInt(proyectoId)
                     const otroProyectoNombre = esTransferencia
                       ? (saliente ? mov.proyecto_destino_nombre : mov.proyecto_origen_nombre)
@@ -636,6 +685,10 @@ export default function DetalleArticulo() {
                       icono = <ArrowRightLeft size={13} className="text-blue-600 dark:text-blue-400" />
                       color = 'bg-blue-100 dark:bg-blue-900 text-blue-600 dark:text-blue-400'
                       positivo = !saliente
+                    } else if (esTraslado) {
+                      icono = <Move size={13} className="text-blue-600 dark:text-blue-400" />
+                      color = 'bg-blue-100 dark:bg-blue-900'
+                      etiqueta = 'Movido de ubicación'
                     } else if (mov.tipo === 'baja') {
                       icono = <Ban size={13} className="text-amber-600 dark:text-amber-400" />
                       color = 'bg-amber-100 dark:bg-amber-900'
@@ -676,11 +729,11 @@ export default function DetalleArticulo() {
                           </p>
                         </div>
                         <span className={`font-bold text-sm flex-shrink-0 ${
-                          esTransferencia ? 'text-blue-600 dark:text-blue-400'
+                          esTransferencia || esTraslado ? 'text-blue-600 dark:text-blue-400'
                           : mov.tipo === 'baja' ? 'text-amber-600 dark:text-amber-400'
                           : positivo ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'
                         }`}>
-                          {positivo ? '+' : '-'}{mov.cantidad}
+                          {esTraslado ? '' : (positivo ? '+' : '-')}{mov.cantidad}
                         </span>
                       </div>
                     )
@@ -961,6 +1014,88 @@ export default function DetalleArticulo() {
             <div className="flex gap-3 pt-2">
               <Button variant="ghost" onClick={() => setModal(null)} className="flex-1">Cancelar</Button>
               <Button onClick={handleGuardarUbicacion} className="flex-1">Guardar</Button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {/* Modal mover a otra ubicación (mismo proyecto) */}
+      {modal === 'trasladar' && (
+        <Modal title="Mover a otra ubicación" onClose={() => setModal(null)} size="sm">
+          <div className="space-y-4">
+            <p className="text-sm text-gray-500 dark:text-gray-400">
+              Mueve unidades de <strong className="text-gray-700 dark:text-gray-300">{articulo.nombre}</strong> desde{' '}
+              <strong className="text-gray-700 dark:text-gray-300">{formTrasladar.ubicacionActual}</strong> a otra
+              ubicación de este mismo proyecto. Quedan {formTrasladar.disponible} {articulo.unidad} disponibles ahí.
+            </p>
+
+            {articulo.ubicaciones.filter(u => u.stock_id !== formTrasladar.stockId).length > 0 && (
+              <Select label="¿A qué ubicación? *"
+                value={formTrasladar.destinoModo === 'nueva' ? NUEVA_UBICACION : formTrasladar.destinoStockId}
+                error={errorsTrasladar.destino}
+                onChange={e => {
+                  const v = e.target.value
+                  if (v === NUEVA_UBICACION) setFormTrasladar(f => ({ ...f, destinoModo: 'nueva', destinoStockId: '' }))
+                  else setFormTrasladar(f => ({ ...f, destinoModo: 'existente', destinoStockId: v }))
+                }}>
+                <option value="">Selecciona una ubicación...</option>
+                {articulo.ubicaciones.filter(u => u.stock_id !== formTrasladar.stockId).map(u => (
+                  <option key={u.stock_id} value={u.stock_id}>
+                    {u.ubicacion || SIN_UBICACION} ({u.cantidad} {articulo.unidad})
+                  </option>
+                ))}
+                <option value={NUEVA_UBICACION}>+ Nueva ubicación</option>
+              </Select>
+            )}
+
+            {formTrasladar.destinoModo === 'nueva' && (
+              <div className="grid grid-cols-2 gap-3">
+                <Input label="Ubicación" list="dl-ubicaciones" value={formTrasladar.ubicacionNueva}
+                  onChange={e => setFormTrasladar(f => ({ ...f, ubicacionNueva: e.target.value }))}
+                  placeholder="Ej: Estantería B" />
+                <Select label="Sala" value={formTrasladar.salaNueva}
+                  onChange={e => setFormTrasladar(f => ({ ...f, salaNueva: e.target.value }))}>
+                  <option value="">Sin sala</option>
+                  {salas.map(s => <option key={s.id} value={s.id}>{s.nombre}</option>)}
+                </Select>
+              </div>
+            )}
+
+            <Input
+              label="Cantidad a mover *"
+              type="number" min="0.01" max={formTrasladar.disponible} step="0.01"
+              value={formTrasladar.cantidad}
+              error={errorsTrasladar.cantidad}
+              onChange={e => setFormTrasladar(f => ({ ...f, cantidad: e.target.value }))}
+              placeholder={`Cantidad en ${articulo.unidad}`}
+            />
+
+            {operadores.length > 0 ? (
+              <Select label="Operador *" value={formTrasladar.operador} error={errorsTrasladar.operador}
+                onChange={e => setFormTrasladar(f => ({ ...f, operador: e.target.value }))}>
+                <option value="">Selecciona operador...</option>
+                {operadores.map(op => <option key={op.id} value={op.nombre}>{op.nombre}</option>)}
+              </Select>
+            ) : (
+              <Input
+                label="¿Quién realiza el movimiento? *"
+                value={formTrasladar.operador}
+                error={errorsTrasladar.operador}
+                onChange={e => setFormTrasladar(f => ({ ...f, operador: e.target.value }))}
+                placeholder="Tu nombre"
+              />
+            )}
+
+            <Input
+              label="Motivo (opcional)"
+              value={formTrasladar.motivo}
+              onChange={e => setFormTrasladar(f => ({ ...f, motivo: e.target.value }))}
+              placeholder="Reorganización, limpieza..."
+            />
+
+            <div className="flex gap-3 pt-2">
+              <Button variant="ghost" onClick={() => setModal(null)} className="flex-1">Cancelar</Button>
+              <Button onClick={handleTrasladar} className="flex-1">Mover</Button>
             </div>
           </div>
         </Modal>

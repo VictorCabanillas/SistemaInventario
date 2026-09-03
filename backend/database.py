@@ -36,6 +36,27 @@ def _table_exists(cursor, table):
     ).fetchone() is not None
 
 
+def _recuperar_renombrada_huerfana(conn, cursor, tabla):
+    """Si `tabla` no existe pero `tabla_old` sí, una migración anterior se
+    interrumpió (proceso matado, contenedor reiniciado a medio camino) justo
+    después de renombrarla y antes de recrearla y copiar los datos. Deshace
+    el rename para recuperar la tabla real, antes de que el resto de
+    init_db() la dé por "no existe todavía" y cree una vacía nueva encima
+    (lo que dejaría los datos reales huérfanos en `tabla_old` para siempre)."""
+    if not _table_exists(cursor, tabla) and _table_exists(cursor, f"{tabla}_old"):
+        cursor.execute(f"ALTER TABLE {tabla}_old RENAME TO {tabla}")
+        conn.commit()
+
+
+def _preparar_renombrado(cursor, tabla):
+    """Antes de renombrar `tabla` a `tabla_old`: si `tabla_old` ya existe es
+    porque una migración anterior se interrumpió después de terminar de
+    copiar los datos pero antes de limpiar — su contenido ya está duplicado
+    en `tabla`, así que se descarta con seguridad para no chocar con el
+    rename de este intento."""
+    cursor.execute(f"DROP TABLE IF EXISTS {tabla}_old")
+
+
 def _migrar_catalogo_y_stock(conn, cursor):
     """
     Migra instalaciones antiguas donde `articulos` guardaba proyecto_id y
@@ -43,10 +64,15 @@ def _migrar_catalogo_y_stock(conn, cursor):
     (nombre+marca+referencia) y `stock` con las existencias por proyecto.
     Idempotente: solo actúa si detecta el esquema viejo.
     """
+    _recuperar_renombrada_huerfana(conn, cursor, "articulos")
+    _recuperar_renombrada_huerfana(conn, cursor, "movimientos")
+
     if not _column_exists(cursor, "articulos", "proyecto_id"):
         return
 
     conn.execute("PRAGMA foreign_keys = OFF")
+    _preparar_renombrado(cursor, "articulos")
+    _preparar_renombrado(cursor, "movimientos")
     cursor.execute("ALTER TABLE articulos RENAME TO articulos_old")
     cursor.execute("ALTER TABLE movimientos RENAME TO movimientos_old")
     conn.commit()
@@ -154,10 +180,15 @@ def _migrar_stock_baja(conn, cursor):
     executescript de abajo con el esquema final) o ya tiene la columna
     `estado`, no hace nada.
     """
+    _recuperar_renombrada_huerfana(conn, cursor, "stock")
+    _recuperar_renombrada_huerfana(conn, cursor, "movimientos")
+
     if not _table_exists(cursor, "stock") or _column_exists(cursor, "stock", "estado"):
         return
 
     conn.execute("PRAGMA foreign_keys = OFF")
+    _preparar_renombrado(cursor, "stock")
+    _preparar_renombrado(cursor, "movimientos")
     cursor.execute("ALTER TABLE stock RENAME TO stock_old")
     cursor.execute("ALTER TABLE movimientos RENAME TO movimientos_old")
     conn.commit()
@@ -227,6 +258,62 @@ def _migrar_stock_baja(conn, cursor):
     print("Migración de esquema completada: stock por ubicación/estado + bajas.")
 
 
+def _migrar_tipo_traslado(conn, cursor):
+    """
+    Añade 'traslado' (mover cantidad entre ubicaciones del mismo proyecto) al
+    CHECK de movimientos.tipo. Idempotente: comprueba el SQL de creación de
+    la tabla ya guardado por SQLite en sqlite_master.
+    """
+    _recuperar_renombrada_huerfana(conn, cursor, "movimientos")
+
+    if not _table_exists(cursor, "movimientos"):
+        return
+    row = cursor.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='movimientos'"
+    ).fetchone()
+    if row and "'traslado'" in row["sql"]:
+        return
+
+    conn.execute("PRAGMA foreign_keys = OFF")
+    _preparar_renombrado(cursor, "movimientos")
+    cursor.execute("ALTER TABLE movimientos RENAME TO movimientos_old")
+    conn.commit()
+
+    cursor.executescript("""
+        CREATE TABLE movimientos (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            articulo_id INTEGER NOT NULL,
+            tipo TEXT NOT NULL CHECK(tipo IN ('entrada', 'salida', 'transferencia', 'baja', 'reparacion', 'traslado')),
+            cantidad REAL NOT NULL,
+            motivo TEXT,
+            operador TEXT NOT NULL,
+            proyecto_id INTEGER,
+            proyecto_origen_id INTEGER,
+            proyecto_destino_id INTEGER,
+            fecha TEXT DEFAULT (datetime('now')),
+            FOREIGN KEY (articulo_id) REFERENCES articulos(id) ON DELETE CASCADE,
+            FOREIGN KEY (proyecto_id) REFERENCES proyectos(id) ON DELETE SET NULL,
+            FOREIGN KEY (proyecto_origen_id) REFERENCES proyectos(id) ON DELETE SET NULL,
+            FOREIGN KEY (proyecto_destino_id) REFERENCES proyectos(id) ON DELETE SET NULL
+        );
+    """)
+    cursor.execute("""
+        INSERT INTO movimientos (id, articulo_id, tipo, cantidad, motivo, operador,
+                                  proyecto_id, proyecto_origen_id, proyecto_destino_id, fecha)
+        SELECT id, articulo_id, tipo, cantidad, motivo, operador,
+               proyecto_id, proyecto_origen_id, proyecto_destino_id, fecha
+        FROM movimientos_old
+    """)
+    cursor.execute(
+        "INSERT OR REPLACE INTO sqlite_sequence (name, seq) "
+        "VALUES ('movimientos', (SELECT COALESCE(MAX(id), 0) FROM movimientos))"
+    )
+    cursor.execute("DROP TABLE movimientos_old")
+    conn.commit()
+    conn.execute("PRAGMA foreign_keys = ON")
+    print("Migración de esquema completada: tipo de movimiento 'traslado'.")
+
+
 def init_db():
     conn = get_db()
     cursor = conn.cursor()
@@ -235,6 +322,7 @@ def init_db():
     # para que los CREATE TABLE IF NOT EXISTS de abajo creen el esquema nuevo.
     _migrar_catalogo_y_stock(conn, cursor)
     _migrar_stock_baja(conn, cursor)
+    _migrar_tipo_traslado(conn, cursor)
 
     cursor.executescript("""
         CREATE TABLE IF NOT EXISTS categorias (
@@ -302,7 +390,7 @@ def init_db():
         CREATE TABLE IF NOT EXISTS movimientos (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             articulo_id INTEGER NOT NULL,
-            tipo TEXT NOT NULL CHECK(tipo IN ('entrada', 'salida', 'transferencia', 'baja', 'reparacion')),
+            tipo TEXT NOT NULL CHECK(tipo IN ('entrada', 'salida', 'transferencia', 'baja', 'reparacion', 'traslado')),
             cantidad REAL NOT NULL,
             motivo TEXT,
             operador TEXT NOT NULL,

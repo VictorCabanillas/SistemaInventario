@@ -953,6 +953,38 @@ def create_movimiento(data: MovimientoCreate):
             db.commit()
             return {"detail": "ok"}
 
+        if data.tipo == "traslado":
+            if not data.stock_id:
+                raise HTTPException(400, "El traslado requiere stock_id")
+
+            origen = db.execute("SELECT * FROM stock WHERE id=?", (data.stock_id,)).fetchone()
+            if not origen:
+                raise HTTPException(404, "Stock de origen no encontrado")
+            if origen["estado"] != "ok":
+                raise HTTPException(400, "No se puede trasladar material dado de baja")
+            if origen["cantidad"] < data.cantidad:
+                raise HTTPException(400, f"Stock insuficiente en la ubicación de origen. Disponible: {origen['cantidad']}")
+
+            destino_id = _find_or_create_stock(
+                db, origen["articulo_id"], origen["proyecto_id"], data.ubicacion_destino, estado='ok'
+            )
+            if destino_id == origen["id"]:
+                raise HTTPException(400, "Elige una ubicación de destino distinta de la actual")
+            if data.sala_destino_id is not None:
+                db.execute("UPDATE stock SET sala_id=? WHERE id=?", (data.sala_destino_id, destino_id))
+
+            _restar_stock(db, origen["id"], data.cantidad)
+            db.execute(
+                "UPDATE stock SET cantidad = cantidad + ?, updated_at=datetime('now') WHERE id=?",
+                (data.cantidad, destino_id)
+            )
+            db.execute("""
+                INSERT INTO movimientos (articulo_id, tipo, cantidad, motivo, operador, proyecto_id)
+                VALUES (?, 'traslado', ?, ?, ?, ?)
+            """, (origen["articulo_id"], data.cantidad, data.motivo, data.operador, origen["proyecto_id"]))
+            db.commit()
+            return {"detail": "ok"}
+
         raise HTTPException(400, f"Tipo de movimiento desconocido: {data.tipo}")
     finally:
         db.close()

@@ -45,6 +45,8 @@ export const createMovimiento = (data) => request('/movimientos', { method: 'POS
 // Entrada en una ubicación ya existente (data.stock_id) o nueva (data.articulo_id + data.proyecto_id + data.ubicacion)
 export const createEntrada = (data) => request('/movimientos', { method: 'POST', body: JSON.stringify({ ...data, tipo: 'entrada' }) })
 export const createTransferencia = (data) => request('/movimientos', { method: 'POST', body: JSON.stringify({ ...data, tipo: 'transferencia' }) })
+// Mover cantidad entre dos ubicaciones del MISMO proyecto (a diferencia de la transferencia, que exige proyectos distintos)
+export const createTraslado = (data) => request('/movimientos', { method: 'POST', body: JSON.stringify({ ...data, tipo: 'traslado' }) })
 export const createBaja = (data) => request('/movimientos', { method: 'POST', body: JSON.stringify({ ...data, tipo: 'baja' }) })
 export const createReparacion = (data) => request('/movimientos', { method: 'POST', body: JSON.stringify({ ...data, tipo: 'reparacion' }) })
 
